@@ -123,6 +123,9 @@ async function initDb() {
     UNIQUE(source_id, employee_id, attendance_date, check_in)
   )`);
 
+  await run("CREATE INDEX IF NOT EXISTS attendance_records_date_idx ON attendance_records (attendance_date)");
+  await run("CREATE INDEX IF NOT EXISTS attendance_records_employee_idx ON attendance_records (employee_id)");
+
   await run(`CREATE TABLE IF NOT EXISTS mobile_punches (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),

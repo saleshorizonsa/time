@@ -18,7 +18,7 @@ SUPABASE_ANON_KEY=your-supabase-anon-key
 SUPABASE_PROJECT_REF=ldkudwluqfupxngdnvcd
 SUPABASE_DB_PASSWORD=your-supabase-database-password
 SUPABASE_DB_HOST=aws-1-ap-northeast-1.pooler.supabase.com
-SUPABASE_DB_PORT=5432
+SUPABASE_DB_PORT=6543
 SUPABASE_DB_USER=postgres.ldkudwluqfupxngdnvcd
 SUPABASE_DB_NAME=postgres
 DATABASE_SSL=true
@@ -27,11 +27,21 @@ DATABASE_SSL=true
 If you prefer, paste Supabase's complete pooled connection string instead:
 
 ```env
-DATABASE_URL=postgresql://postgres.ldkudwluqfupxngdnvcd:YOUR_PASSWORD@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres
+DATABASE_URL=postgresql://postgres.ldkudwluqfupxngdnvcd:YOUR_PASSWORD@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres
 DATABASE_SSL=true
 ```
 
 The project URL alone cannot connect to the database. The backend also needs the Supabase database password or full `DATABASE_URL`.
+
+For Vercel serverless deployments, use the transaction pooler port `6543`. The session pooler on `5432` can hit connection limits quickly.
+
+## Initialize Schema
+
+Run the schema initializer after configuring database environment variables:
+
+```powershell
+npm run db:init --prefix server
+```
 
 ## Local PostgreSQL Setup
 

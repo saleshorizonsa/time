@@ -17,7 +17,7 @@ function buildDatabaseUrl() {
   const user = process.env.SUPABASE_DB_USER || (projectRef ? `postgres.${projectRef}` : "postgres");
   const database = process.env.SUPABASE_DB_NAME || "postgres";
   const host = process.env.SUPABASE_DB_HOST || "aws-1-ap-northeast-1.pooler.supabase.com";
-  const port = process.env.SUPABASE_DB_PORT || "5432";
+  const port = process.env.SUPABASE_DB_PORT || "6543";
 
   if (projectRef && password) {
     const encodedPassword = encodeURIComponent(password);

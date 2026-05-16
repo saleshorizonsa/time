@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   username TEXT,
@@ -6,17 +6,25 @@ CREATE TABLE users (
   employee_code TEXT,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('Admin','Viewer')),
+  auth_provider TEXT NOT NULL DEFAULT 'local',
+  supabase_user_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX users_username_unique ON users (lower(username)) WHERE username IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique
+  ON users (lower(username))
+  WHERE username IS NOT NULL;
 
-CREATE TABLE settings (
+CREATE UNIQUE INDEX IF NOT EXISTS users_supabase_user_id_unique
+  ON users (supabase_user_id)
+  WHERE supabase_user_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
 
-CREATE TABLE companies (
+CREATE TABLE IF NOT EXISTS companies (
   id SERIAL PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
@@ -24,7 +32,7 @@ CREATE TABLE companies (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE employees (
+CREATE TABLE IF NOT EXISTS employees (
   id SERIAL PRIMARY KEY,
   company_id INTEGER NOT NULL REFERENCES companies(id),
   employee_code TEXT NOT NULL,
@@ -42,7 +50,7 @@ CREATE TABLE employees (
   UNIQUE(company_id, employee_code)
 );
 
-CREATE TABLE attendance_records (
+CREATE TABLE IF NOT EXISTS attendance_records (
   id SERIAL PRIMARY KEY,
   source_id TEXT,
   employee_id TEXT NOT NULL,
@@ -60,7 +68,13 @@ CREATE TABLE attendance_records (
   UNIQUE(source_id, employee_id, attendance_date, check_in)
 );
 
-CREATE TABLE mobile_punches (
+CREATE INDEX IF NOT EXISTS attendance_records_date_idx
+  ON attendance_records (attendance_date);
+
+CREATE INDEX IF NOT EXISTS attendance_records_employee_idx
+  ON attendance_records (employee_id);
+
+CREATE TABLE IF NOT EXISTS mobile_punches (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),
   employee_id TEXT NOT NULL,
@@ -75,7 +89,7 @@ CREATE TABLE mobile_punches (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE shifts (
+CREATE TABLE IF NOT EXISTS shifts (
   id SERIAL PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
@@ -88,7 +102,7 @@ CREATE TABLE shifts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE holidays (
+CREATE TABLE IF NOT EXISTS holidays (
   id SERIAL PRIMARY KEY,
   company_id INTEGER REFERENCES companies(id),
   holiday_date TEXT NOT NULL,
@@ -98,7 +112,7 @@ CREATE TABLE holidays (
   UNIQUE(company_id, holiday_date, name)
 );
 
-CREATE TABLE leave_requests (
+CREATE TABLE IF NOT EXISTS leave_requests (
   id SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id),
   leave_type TEXT NOT NULL,
@@ -113,7 +127,7 @@ CREATE TABLE leave_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE attendance_corrections (
+CREATE TABLE IF NOT EXISTS attendance_corrections (
   id SERIAL PRIMARY KEY,
   employee_id INTEGER NOT NULL REFERENCES employees(id),
   attendance_date TEXT NOT NULL,
@@ -128,7 +142,7 @@ CREATE TABLE attendance_corrections (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE sync_runs (
+CREATE TABLE IF NOT EXISTS sync_runs (
   id SERIAL PRIMARY KEY,
   started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   finished_at TIMESTAMPTZ,
@@ -138,7 +152,7 @@ CREATE TABLE sync_runs (
   error_message TEXT
 );
 
-CREATE TABLE error_logs (
+CREATE TABLE IF NOT EXISTS error_logs (
   id SERIAL PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   level TEXT NOT NULL,
