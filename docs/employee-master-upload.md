@@ -6,18 +6,9 @@ The Admin panel includes **Master Data** for:
 - Employee master records
 - CSV employee upload
 
-## Default Companies
+## Companies
 
-The database creates four companies automatically on first start:
-
-```text
-COMP1 - Company 1
-COMP2 - Company 2
-COMP3 - Company 3
-COMP4 - Company 4
-```
-
-Admin can rename the code and name from the Master Data page.
+No mock companies are created automatically. Admin creates up to four real company records from the Master Data page before adding or uploading employees.
 
 ## CSV Upload Format
 

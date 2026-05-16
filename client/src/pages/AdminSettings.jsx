@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 export default function AdminSettings({ helpers }) {
   const { api } = helpers;
   const [settings, setSettings] = useState({});
+  const [accessSchema, setAccessSchema] = useState([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -26,6 +27,31 @@ export default function AdminSettings({ helpers }) {
     }
   }
 
+  async function discoverAccess(event) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+    try {
+      const result = await api("/api/settings/access/discover", {
+        method: "POST",
+        body: {
+          accessDbPath: settings.accessDbPath,
+          accessDriver: settings.accessDriver,
+          accessDbPassword: settings.accessDbPassword,
+          accessUid: settings.accessUid,
+          accessPwd: settings.accessPwd
+        }
+      });
+      setAccessSchema(result.tables || []);
+      setMessage(`Found ${result.tables?.length || 0} Access tables.`);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  const selectedTable = accessSchema.find((table) => table.name === settings.accessTable);
+  const selectedColumns = selectedTable?.columns || [];
+
   return (
     <form onSubmit={save} className="space-y-5">
       <section className="rounded border border-line bg-white p-4 shadow-sm">
@@ -34,11 +60,29 @@ export default function AdminSettings({ helpers }) {
           <Field label="Access DB Path">
             <input className="input" value={settings.accessDbPath || ""} onChange={(e) => update("accessDbPath", e.target.value)} placeholder="\\\\REMOTE-PC\\SharedFolder\\attendance.accdb" />
           </Field>
+          <Field label="Browse Access File">
+            <input
+              className="block w-full rounded border border-line p-2 text-sm"
+              type="file"
+              accept=".accdb,.mdb"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) setMessage(`Selected ${file.name}. For production sync, enter the server UNC/local path above.`);
+              }}
+            />
+          </Field>
           <Field label="ODBC Driver">
             <input className="input" value={settings.accessDriver || ""} onChange={(e) => update("accessDriver", e.target.value)} />
           </Field>
           <Field label="Access Table">
-            <input className="input" value={settings.accessTable || ""} onChange={(e) => update("accessTable", e.target.value)} />
+            {accessSchema.length ? (
+              <select className="input" value={settings.accessTable || ""} onChange={(e) => update("accessTable", e.target.value)}>
+                <option value="">Select table</option>
+                {accessSchema.map((table) => <option key={table.name} value={table.name}>{table.name}</option>)}
+              </select>
+            ) : (
+              <input className="input" value={settings.accessTable || ""} onChange={(e) => update("accessTable", e.target.value)} />
+            )}
           </Field>
           <Field label="Database User">
             <input className="input" value={settings.accessUid || ""} onChange={(e) => update("accessUid", e.target.value)} />
@@ -49,6 +93,21 @@ export default function AdminSettings({ helpers }) {
           <Field label="Access File Password">
             <input className="input" type="password" value={settings.accessDbPassword || ""} onChange={(e) => update("accessDbPassword", e.target.value)} placeholder={settings.hasAccessPassword ? "Saved" : ""} />
           </Field>
+        </div>
+        <div className="mt-4">
+          <button onClick={discoverAccess} className="rounded border border-line px-4 py-2 text-sm font-semibold">
+            Discover Access Tables
+          </button>
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <ColumnField label="Employee ID" value={settings.accessEmployeeIdColumn} options={selectedColumns} onChange={(value) => update("accessEmployeeIdColumn", value)} />
+          <ColumnField label="Employee Name" value={settings.accessEmployeeNameColumn} options={selectedColumns} onChange={(value) => update("accessEmployeeNameColumn", value)} />
+          <ColumnField label="Department" value={settings.accessDepartmentColumn} options={selectedColumns} onChange={(value) => update("accessDepartmentColumn", value)} />
+          <ColumnField label="Shift" value={settings.accessShiftColumn} options={selectedColumns} onChange={(value) => update("accessShiftColumn", value)} />
+          <ColumnField label="Check In" value={settings.accessCheckInColumn} options={selectedColumns} onChange={(value) => update("accessCheckInColumn", value)} />
+          <ColumnField label="Check Out" value={settings.accessCheckOutColumn} options={selectedColumns} onChange={(value) => update("accessCheckOutColumn", value)} />
+          <ColumnField label="Status" value={settings.accessStatusColumn} options={selectedColumns} onChange={(value) => update("accessStatusColumn", value)} />
+          <ColumnField label="Overtime Minutes" value={settings.accessOvertimeMinutesColumn} options={selectedColumns} onChange={(value) => update("accessOvertimeMinutesColumn", value)} />
         </div>
       </section>
 
@@ -135,5 +194,20 @@ function Field({ label, children }) {
       <span className="mb-1 block">{label}</span>
       {children}
     </label>
+  );
+}
+
+function ColumnField({ label, value, options, onChange }) {
+  return (
+    <Field label={label}>
+      {options.length ? (
+        <select className="input" value={value || ""} onChange={(event) => onChange(event.target.value)}>
+          <option value="">Not mapped</option>
+          {options.map((column) => <option key={column} value={column}>{column}</option>)}
+        </select>
+      ) : (
+        <input className="input" value={value || ""} onChange={(event) => onChange(event.target.value)} />
+      )}
+    </Field>
   );
 }

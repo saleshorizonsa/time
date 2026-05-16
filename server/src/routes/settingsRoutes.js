@@ -1,6 +1,7 @@
 const express = require("express");
 const env = require("../config/env");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { discoverAccessSchema } = require("../services/accessService");
 const { getSettings, saveSettings } = require("../services/settingsService");
 
 const router = express.Router();
@@ -13,6 +14,14 @@ router.get("/", async (req, res, next) => {
       accessDbPath: saved.accessDbPath || env.access.dbPath,
       accessDriver: saved.accessDriver || env.access.driver,
       accessTable: saved.accessTable || env.access.table,
+      accessEmployeeIdColumn: saved.accessEmployeeIdColumn || env.access.columns.employeeId,
+      accessEmployeeNameColumn: saved.accessEmployeeNameColumn || env.access.columns.employeeName,
+      accessDepartmentColumn: saved.accessDepartmentColumn || env.access.columns.department,
+      accessShiftColumn: saved.accessShiftColumn || env.access.columns.shift,
+      accessCheckInColumn: saved.accessCheckInColumn || env.access.columns.checkIn,
+      accessCheckOutColumn: saved.accessCheckOutColumn || env.access.columns.checkOut,
+      accessStatusColumn: saved.accessStatusColumn || env.access.columns.status,
+      accessOvertimeMinutesColumn: saved.accessOvertimeMinutesColumn || env.access.columns.overtimeMinutes,
       remoteHost: saved.remoteHost || env.remoteHost,
       remoteShare: saved.remoteShare || env.remoteShare,
       syncFrequencyCron: saved.syncFrequencyCron || env.syncFrequencyCron,
@@ -44,6 +53,14 @@ router.put("/", requireRole("Admin"), async (req, res, next) => {
       "accessDbPath",
       "accessDriver",
       "accessTable",
+      "accessEmployeeIdColumn",
+      "accessEmployeeNameColumn",
+      "accessDepartmentColumn",
+      "accessShiftColumn",
+      "accessCheckInColumn",
+      "accessCheckOutColumn",
+      "accessStatusColumn",
+      "accessOvertimeMinutesColumn",
       "remoteHost",
       "remoteShare",
       "syncFrequencyCron",
@@ -69,6 +86,16 @@ router.put("/", requireRole("Admin"), async (req, res, next) => {
       if (Object.prototype.hasOwnProperty.call(req.body, key)) payload[key] = req.body[key];
     });
     res.json(await saveSettings(payload));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/access/discover", requireRole("Admin"), async (req, res, next) => {
+  try {
+    const saved = await getSettings();
+    const settings = { ...saved, ...req.body };
+    res.json(await discoverAccessSchema(settings));
   } catch (error) {
     next(error);
   }

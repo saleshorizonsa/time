@@ -19,6 +19,23 @@ router.get("/companies", async (req, res, next) => {
   }
 });
 
+router.post("/companies", requireRole("Admin"), async (req, res, next) => {
+  try {
+    const count = await get("SELECT COUNT(*)::int AS count FROM companies");
+    if (count.count >= 4) {
+      return res.status(400).json({ message: "Maximum of 4 companies is allowed." });
+    }
+    const { code, name } = req.body;
+    const result = await run("INSERT INTO companies (code, name, is_active) VALUES (?, ?, 1)", [
+      String(code || "").trim(),
+      String(name || "").trim()
+    ]);
+    return res.status(201).json(await get("SELECT * FROM companies WHERE id = ?", [result.id]));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.put("/companies/:id", requireRole("Admin"), async (req, res, next) => {
   try {
     const { code, name, isActive } = req.body;

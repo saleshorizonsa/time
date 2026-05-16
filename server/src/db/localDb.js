@@ -217,26 +217,7 @@ async function initDb() {
     ]);
   }
 
-  const companyCount = await get("SELECT COUNT(*)::int AS count FROM companies");
-  if (!companyCount.count) {
-    const defaults = [
-      ["COMP1", "Company 1"],
-      ["COMP2", "Company 2"],
-      ["COMP3", "Company 3"],
-      ["COMP4", "Company 4"]
-    ];
-    for (const [code, name] of defaults) {
-      await run("INSERT INTO companies (code, name) VALUES (?, ?)", [code, name]);
-    }
-  }
-
-  const shiftCount = await get("SELECT COUNT(*)::int AS count FROM shifts");
-  if (!shiftCount.count) {
-    await run(
-      "INSERT INTO shifts (code, name, start_time, end_time, grace_minutes, early_out_grace_minutes, overtime_after_minutes) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      ["DAY", "Day Shift", "08:00", "17:00", 10, 10, 30]
-    );
-  }
+  // No sample company, employee, shift, or attendance data is seeded in production.
 }
 
 async function closeDb() {

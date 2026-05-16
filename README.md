@@ -152,7 +152,7 @@ Employees use the **Punch** page from mobile. The browser asks for location perm
 
 ## Employee Master Upload
 
-Admin can manage four company records and upload employees from **Master Data**.
+Admin can create up to four company records and upload employees from **Master Data**. No mock company, employee, attendance, or shift data is seeded automatically.
 
 CSV header:
 
@@ -174,6 +174,21 @@ Each employee row has a **Mobile Punch** toggle. When enabled, the system create
 - The Admin sees a one-time temporary password when access is first created
 
 If mobile access is later disabled, that employee cannot log in for mobile punch.
+
+## Microsoft Access Mapping
+
+Admin Settings includes Access table discovery and field mapping. The app syncs only these mapped fields:
+
+- Employee ID
+- Employee Name
+- Department
+- Shift
+- Check In
+- Check Out
+- Status
+- Overtime Minutes
+
+Use a server-visible local path or UNC path such as `\\REMOTE-PC\SharedFolder\attendance.accdb`. Browser file selection can show the file name, but production sync requires the backend server to access the path directly.
 
 ## Attendance Management
 

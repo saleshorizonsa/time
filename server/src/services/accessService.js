@@ -2,6 +2,17 @@ const fs = require("fs");
 const odbc = require("odbc");
 const env = require("../config/env");
 
+const requiredMappings = [
+  ["employeeId", "accessEmployeeIdColumn"],
+  ["employeeName", "accessEmployeeNameColumn"],
+  ["department", "accessDepartmentColumn"],
+  ["shift", "accessShiftColumn"],
+  ["checkIn", "accessCheckInColumn"],
+  ["checkOut", "accessCheckOutColumn"],
+  ["status", "accessStatusColumn"],
+  ["overtimeMinutes", "accessOvertimeMinutesColumn"]
+];
+
 function buildConnectionString(settings = {}) {
   const dbPath = settings.accessDbPath || env.access.dbPath;
   const driver = settings.accessDriver || env.access.driver;
@@ -42,9 +53,26 @@ function validateDbPath(dbPath) {
 
 async function queryAttendance(settings = {}) {
   const table = settings.accessTable || env.access.table;
-  const columns = env.access.columns;
+  const columns = {
+    employeeId: settings.accessEmployeeIdColumn || env.access.columns.employeeId,
+    employeeName: settings.accessEmployeeNameColumn || env.access.columns.employeeName,
+    department: settings.accessDepartmentColumn || env.access.columns.department,
+    shift: settings.accessShiftColumn || env.access.columns.shift,
+    checkIn: settings.accessCheckInColumn || env.access.columns.checkIn,
+    checkOut: settings.accessCheckOutColumn || env.access.columns.checkOut,
+    status: settings.accessStatusColumn || env.access.columns.status,
+    overtimeMinutes: settings.accessOvertimeMinutesColumn || env.access.columns.overtimeMinutes
+  };
   const dbPath = settings.accessDbPath || env.access.dbPath;
   validateDbPath(dbPath);
+
+  for (const [label, settingKey] of requiredMappings) {
+    if (!columns[label]) {
+      const error = new Error(`Access mapping is missing required field: ${settingKey}`);
+      error.code = "INVALID_MAPPING";
+      throw error;
+    }
+  }
 
   const sql = `
     SELECT
@@ -77,4 +105,39 @@ async function queryAttendance(settings = {}) {
   }
 }
 
-module.exports = { buildConnectionString, queryAttendance, validateDbPath };
+async function discoverAccessSchema(settings = {}) {
+  const dbPath = settings.accessDbPath || env.access.dbPath;
+  validateDbPath(dbPath);
+
+  let connection;
+  try {
+    connection = await odbc.connect(buildConnectionString(settings));
+    const tableRows = await connection.tables(null, null, null, "TABLE");
+    const tables = [];
+
+    for (const tableRow of tableRows) {
+      const tableName = tableRow.TABLE_NAME || tableRow.table_name;
+      if (!tableName || String(tableName).startsWith("MSys")) continue;
+      const columnRows = await connection.columns(null, null, tableName, null);
+      tables.push({
+        name: tableName,
+        columns: columnRows
+          .map((column) => column.COLUMN_NAME || column.column_name)
+          .filter(Boolean)
+      });
+    }
+
+    return { tables };
+  } catch (error) {
+    if (/permission|denied|not a valid password/i.test(error.message)) {
+      error.code = "PERMISSION_DENIED";
+    } else if (/not a valid path|not found|network/i.test(error.message)) {
+      error.code = "REMOTE_UNAVAILABLE";
+    }
+    throw error;
+  } finally {
+    if (connection) await connection.close().catch(() => {});
+  }
+}
+
+module.exports = { buildConnectionString, discoverAccessSchema, queryAttendance, validateDbPath };

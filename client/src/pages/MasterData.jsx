@@ -19,6 +19,7 @@ export default function MasterData({ helpers }) {
   const [companyId, setCompanyId] = useState("");
   const [search, setSearch] = useState("");
   const [employee, setEmployee] = useState(emptyEmployee);
+  const [newCompany, setNewCompany] = useState({ code: "", name: "" });
   const [editingCompany, setEditingCompany] = useState(null);
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState("");
@@ -87,6 +88,20 @@ export default function MasterData({ helpers }) {
     }
   }
 
+  async function createCompany(event) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+    try {
+      await api("/api/master-data/companies", { method: "POST", body: newCompany });
+      setNewCompany({ code: "", name: "" });
+      setMessage("Company created.");
+      await loadCompanies();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function uploadEmployees(event) {
     event.preventDefault();
     if (!file) return;
@@ -130,9 +145,16 @@ export default function MasterData({ helpers }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-semibold">Companies</h2>
-            <p className="text-sm text-slate-500">Four company profiles are available by default.</p>
+            <p className="text-sm text-slate-500">Create up to four real company profiles.</p>
           </div>
         </div>
+        {companies.length < 4 ? (
+          <form onSubmit={createCompany} className="mt-4 grid gap-3 md:grid-cols-[160px_1fr_auto]">
+            <input className="input" value={newCompany.code} onChange={(e) => setNewCompany({ ...newCompany, code: e.target.value })} placeholder="Code" />
+            <input className="input" value={newCompany.name} onChange={(e) => setNewCompany({ ...newCompany, name: e.target.value })} placeholder="Company name" />
+            <button className="rounded bg-brand px-4 py-2 text-sm font-semibold text-white">Add Company</button>
+          </form>
+        ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {companies.map((company) => {
             const editing = editingCompany?.id === company.id;

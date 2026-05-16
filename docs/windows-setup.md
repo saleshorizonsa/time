@@ -99,7 +99,7 @@ Use a process manager such as NSSM or PM2 for Windows. The service account must 
 
 ## Access Source Mapping
 
-By default the API expects these Access table columns:
+Admin Settings can discover Access tables/columns through ODBC and map only the fields required by the application. By default the API expects these Access table columns:
 
 ```env
 ACCESS_EMPLOYEE_ID_COLUMN=EmployeeID
