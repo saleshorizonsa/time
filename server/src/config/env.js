@@ -14,12 +14,14 @@ function buildDatabaseUrl() {
 
   const projectRef = process.env.SUPABASE_PROJECT_REF || supabaseProjectRef(process.env.SUPABASE_URL || "");
   const password = process.env.SUPABASE_DB_PASSWORD;
-  const user = process.env.SUPABASE_DB_USER || "postgres";
+  const user = process.env.SUPABASE_DB_USER || (projectRef ? `postgres.${projectRef}` : "postgres");
   const database = process.env.SUPABASE_DB_NAME || "postgres";
+  const host = process.env.SUPABASE_DB_HOST || "aws-1-ap-northeast-1.pooler.supabase.com";
+  const port = process.env.SUPABASE_DB_PORT || "5432";
 
   if (projectRef && password) {
     const encodedPassword = encodeURIComponent(password);
-    return `postgresql://${user}.${projectRef}:${encodedPassword}@aws-0-eu-central-1.pooler.supabase.com:6543/${database}?pgbouncer=true`;
+    return `postgresql://${user}:${encodedPassword}@${host}:${port}/${database}`;
   }
 
   return "postgres://postgres:postgres@localhost:5432/time_attendance";
