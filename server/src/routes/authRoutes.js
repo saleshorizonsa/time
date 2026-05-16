@@ -4,6 +4,7 @@ const express = require("express");
 const env = require("../config/env");
 const { get, run } = require("../db/localDb");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { ensureAppUserFromSupabase, signInWithSupabase } = require("../services/supabaseAuthService");
 
 const router = express.Router();
 
@@ -36,6 +37,26 @@ router.post("/login", async (req, res, next) => {
     };
     const token = jwt.sign(payload, env.jwtSecret, { expiresIn: "12h" });
     return res.json({ token, user: payload });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/supabase-login", async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    const session = await signInWithSupabase(String(email || "").trim(), password);
+    const appUser = await ensureAppUserFromSupabase(session.user);
+    const payload = {
+      id: appUser.id,
+      email: appUser.email,
+      username: appUser.username,
+      role: appUser.role,
+      employeeId: appUser.employee_id,
+      employeeCode: appUser.employee_code
+    };
+    const token = jwt.sign(payload, env.jwtSecret, { expiresIn: "12h" });
+    return res.json({ token, user: payload, supabaseAccessToken: session.access_token });
   } catch (error) {
     return next(error);
   }

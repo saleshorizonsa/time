@@ -13,7 +13,11 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError("");
     try {
-      onLogin(await api("/api/auth/login", { method: "POST", body: { email, password } }));
+      try {
+        onLogin(await api("/api/auth/supabase-login", { method: "POST", body: { email, password } }));
+      } catch {
+        onLogin(await api("/api/auth/login", { method: "POST", body: { email, password } }));
+      }
     } catch (err) {
       setError(err.message);
     } finally {

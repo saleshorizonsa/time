@@ -64,8 +64,11 @@ async function initDb() {
   await ensureColumn("users", "username", "TEXT");
   await ensureColumn("users", "employee_id", "INTEGER");
   await ensureColumn("users", "employee_code", "TEXT");
+  await ensureColumn("users", "auth_provider", "TEXT NOT NULL DEFAULT 'local'");
+  await ensureColumn("users", "supabase_user_id", "TEXT");
 
   await run("CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users (lower(username)) WHERE username IS NOT NULL");
+  await run("CREATE UNIQUE INDEX IF NOT EXISTS users_supabase_user_id_unique ON users (supabase_user_id) WHERE supabase_user_id IS NOT NULL");
 
   await run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

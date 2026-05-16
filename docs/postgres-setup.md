@@ -14,6 +14,7 @@ Set these environment variables in Vercel and local `.env`:
 
 ```env
 SUPABASE_URL=https://ldkudwluqfupxngdnvcd.supabase.co
+SUPABASE_ANON_KEY=your-supabase-anon-key
 SUPABASE_PROJECT_REF=ldkudwluqfupxngdnvcd
 SUPABASE_DB_PASSWORD=your-supabase-database-password
 SUPABASE_DB_HOST=aws-1-ap-northeast-1.pooler.supabase.com

@@ -33,6 +33,7 @@ const env = {
   clientOrigin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
   jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
   supabaseUrl: process.env.SUPABASE_URL || "https://ldkudwluqfupxngdnvcd.supabase.co",
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
   databaseUrl: buildDatabaseUrl(),
   databaseSsl: process.env.DATABASE_SSL ? process.env.DATABASE_SSL === "true" : Boolean(process.env.SUPABASE_DB_PASSWORD),
   databasePoolMax: Number(process.env.DATABASE_POOL_MAX || 10),
