@@ -1,5 +1,4 @@
 const fs = require("fs");
-const odbc = require("odbc");
 const env = require("../config/env");
 
 const requiredMappings = [
@@ -12,6 +11,17 @@ const requiredMappings = [
   ["status", "accessStatusColumn"],
   ["overtimeMinutes", "accessOvertimeMinutesColumn"]
 ];
+
+function loadOdbc() {
+  try {
+    return require("odbc");
+  } catch (error) {
+    const wrapped = new Error("ODBC is not available in this runtime. Run Access sync on a Windows server with the Microsoft Access ODBC driver installed.");
+    wrapped.code = "ODBC_UNAVAILABLE";
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
 
 function buildConnectionString(settings = {}) {
   const dbPath = settings.accessDbPath || env.access.dbPath;
@@ -89,6 +99,7 @@ async function queryAttendance(settings = {}) {
 
   let connection;
   try {
+    const odbc = loadOdbc();
     connection = await odbc.connect(buildConnectionString(settings));
     return await connection.query(sql);
   } catch (error) {
@@ -111,6 +122,7 @@ async function discoverAccessSchema(settings = {}) {
 
   let connection;
   try {
+    const odbc = loadOdbc();
     connection = await odbc.connect(buildConnectionString(settings));
     const tableRows = await connection.tables(null, null, null, "TABLE");
     const tables = [];

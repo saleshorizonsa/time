@@ -29,6 +29,7 @@ function statusForError(error) {
   if (error.code === "INVALID_PATH") return 400;
   if (error.code === "SUPABASE_AUTH_FAILED") return 401;
   if (error.code === "SUPABASE_AUTH_NOT_CONFIGURED") return 503;
+  if (error.code === "ODBC_UNAVAILABLE") return 501;
   if (error.code === "23505") return 409;
   if (error.code === "28P01" || error.code === "3D000" || error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
     return 503;
