@@ -1,13 +1,38 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../../../.env") });
 
+function supabaseProjectRef(url) {
+  try {
+    return new URL(url).hostname.split(".")[0];
+  } catch {
+    return "";
+  }
+}
+
+function buildDatabaseUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+  const projectRef = process.env.SUPABASE_PROJECT_REF || supabaseProjectRef(process.env.SUPABASE_URL || "");
+  const password = process.env.SUPABASE_DB_PASSWORD;
+  const user = process.env.SUPABASE_DB_USER || "postgres";
+  const database = process.env.SUPABASE_DB_NAME || "postgres";
+
+  if (projectRef && password) {
+    const encodedPassword = encodeURIComponent(password);
+    return `postgresql://${user}.${projectRef}:${encodedPassword}@aws-0-eu-central-1.pooler.supabase.com:6543/${database}?pgbouncer=true`;
+  }
+
+  return "postgres://postgres:postgres@localhost:5432/time_attendance";
+}
+
 const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 5000),
   clientOrigin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
   jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
-  databaseUrl: process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/time_attendance",
-  databaseSsl: process.env.DATABASE_SSL === "true",
+  supabaseUrl: process.env.SUPABASE_URL || "https://ldkudwluqfupxngdnvcd.supabase.co",
+  databaseUrl: buildDatabaseUrl(),
+  databaseSsl: process.env.DATABASE_SSL ? process.env.DATABASE_SSL === "true" : Boolean(process.env.SUPABASE_DB_PASSWORD),
   databasePoolMax: Number(process.env.DATABASE_POOL_MAX || 10),
   adminEmail: process.env.ADMIN_EMAIL || "admin@example.com",
   adminPassword: process.env.ADMIN_PASSWORD || "ChangeMe123!",

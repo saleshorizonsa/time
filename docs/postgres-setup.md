@@ -1,8 +1,36 @@
-# Local PostgreSQL Setup
+# PostgreSQL / Supabase Setup
 
-The application now uses PostgreSQL for production-ready local storage. SQLite is no longer used.
+The application uses PostgreSQL for production-ready storage. SQLite is not used.
 
-## Create Database
+## Supabase Setup
+
+Your Supabase project URL:
+
+```text
+https://ldkudwluqfupxngdnvcd.supabase.co
+```
+
+Set these environment variables in Vercel and local `.env`:
+
+```env
+SUPABASE_URL=https://ldkudwluqfupxngdnvcd.supabase.co
+SUPABASE_PROJECT_REF=ldkudwluqfupxngdnvcd
+SUPABASE_DB_PASSWORD=your-supabase-database-password
+SUPABASE_DB_USER=postgres
+SUPABASE_DB_NAME=postgres
+DATABASE_SSL=true
+```
+
+If you prefer, paste Supabase's complete pooled connection string instead:
+
+```env
+DATABASE_URL=postgresql://postgres.ldkudwluqfupxngdnvcd:YOUR_PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true
+DATABASE_SSL=true
+```
+
+The project URL alone cannot connect to the database. The backend also needs the Supabase database password or full `DATABASE_URL`.
+
+## Local PostgreSQL Setup
 
 Install PostgreSQL locally, then create a database:
 

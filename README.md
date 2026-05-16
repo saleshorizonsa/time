@@ -62,8 +62,8 @@ The backend uses **PostgreSQL** for the application database and ODBC only for o
 
 1. Install Node.js 20 LTS or newer.
 2. Install the Microsoft Access Database Engine ODBC driver on the Windows server.
-3. Create a local PostgreSQL database named `time_attendance`.
-4. Copy `.env.example` to `.env` and adjust `DATABASE_URL`, UNC path, and credentials.
+3. Configure PostgreSQL or Supabase using [postgres-setup.md](docs/postgres-setup.md).
+4. Copy `.env.example` to `.env` and adjust database, UNC path, and credentials.
 5. Install dependencies:
 
 ```powershell
