@@ -1,71 +1,105 @@
-const ExcelJS = require("exceljs");
-const PDFDocument = require("pdfkit");
+const columns = [
+  ["attendance_date", "Date"],
+  ["employee_id", "Employee ID"],
+  ["employee_name", "Employee"],
+  ["department", "Department"],
+  ["shift", "Shift"],
+  ["check_in", "Check In"],
+  ["check_out", "Check Out"],
+  ["status", "Status"],
+  ["overtime_minutes", "Overtime Minutes"]
+];
 
-function addReportColumns(sheet) {
-  sheet.columns = [
-    { header: "Date", key: "attendance_date", width: 14 },
-    { header: "Employee ID", key: "employee_id", width: 16 },
-    { header: "Employee", key: "employee_name", width: 24 },
-    { header: "Department", key: "department", width: 18 },
-    { header: "Shift", key: "shift", width: 16 },
-    { header: "Check In", key: "check_in", width: 22 },
-    { header: "Check Out", key: "check_out", width: 22 },
-    { header: "Status", key: "status", width: 14 },
-    { header: "Overtime Minutes", key: "overtime_minutes", width: 18 }
-  ];
-  sheet.getRow(1).font = { bold: true };
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function buildExcel(records) {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Time Attendance Reporting";
-  const sheet = workbook.addWorksheet("Attendance");
-  addReportColumns(sheet);
-  records.forEach((record) => sheet.addRow(record));
-  sheet.autoFilter = "A1:I1";
-  return workbook.xlsx.writeBuffer();
+  const header = columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("");
+  const rows = records
+    .map((record) => `<tr>${columns.map(([key]) => `<td>${escapeHtml(record[key])}</td>`).join("")}</tr>`)
+    .join("");
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    table { border-collapse: collapse; font-family: Arial, sans-serif; font-size: 11pt; }
+    th { background: #e8eef8; font-weight: bold; }
+    th, td { border: 1px solid #9ca3af; padding: 6px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <table>
+    <thead><tr>${header}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</body>
+</html>`;
+  return Buffer.from(html, "utf8");
+}
+
+function escapePdfText(value) {
+  return String(value ?? "").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function buildPdfObjects(lines) {
+  const content = [
+    "BT",
+    "/F1 16 Tf",
+    "40 555 Td",
+    "(Attendance Report) Tj",
+    "/F1 8 Tf",
+    "0 -24 Td",
+    ...lines.map((line) => [`(${escapePdfText(line)}) Tj`, "0 -12 Td"]).flat(),
+    "ET"
+  ].join("\n");
+
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`
+  ];
+
+  const parts = ["%PDF-1.4\n"];
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(parts.join("")));
+    parts.push(`${index + 1} 0 obj\n${object}\nendobj\n`);
+  });
+  const xrefOffset = Buffer.byteLength(parts.join(""));
+  parts.push(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`);
+  offsets.slice(1).forEach((offset) => {
+    parts.push(`${String(offset).padStart(10, "0")} 00000 n \n`);
+  });
+  parts.push(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+  return Buffer.from(parts.join(""), "binary");
 }
 
 function buildPdf(records) {
-  return new Promise((resolve) => {
-    const doc = new PDFDocument({ margin: 36, size: "A4", layout: "landscape" });
-    const chunks = [];
-    doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-
-    doc.fontSize(16).text("Attendance Report", { align: "left" });
-    doc.moveDown();
-    doc.fontSize(9);
-    doc.text("Date", 36, 86);
-    doc.text("Employee", 100, 86);
-    doc.text("Department", 250, 86);
-    doc.text("Shift", 360, 86);
-    doc.text("In", 450, 86);
-    doc.text("Out", 555, 86);
-    doc.text("Status", 660, 86);
-    doc.moveTo(36, 102).lineTo(800, 102).stroke();
-
-    let y = 112;
-    records.slice(0, 120).forEach((record) => {
-      if (y > 540) {
-        doc.addPage();
-        y = 48;
-      }
-      doc.text(record.attendance_date || "", 36, y, { width: 58 });
-      doc.text(record.employee_name || record.employee_id || "", 100, y, { width: 140 });
-      doc.text(record.department || "", 250, y, { width: 100 });
-      doc.text(record.shift || "", 360, y, { width: 80 });
-      doc.text(record.check_in || "", 450, y, { width: 95 });
-      doc.text(record.check_out || "", 555, y, { width: 95 });
-      doc.text(record.status || "", 660, y, { width: 80 });
-      y += 18;
-    });
-
-    if (records.length > 120) {
-      doc.moveDown().text(`Showing first 120 of ${records.length} records. Use Excel export for full data.`);
-    }
-    doc.end();
-  });
+  const lines = [
+    "Date | Employee | Department | Shift | Check In | Check Out | Status | OT",
+    ...records.slice(0, 36).map((record) =>
+      [
+        record.attendance_date || "",
+        record.employee_name || record.employee_id || "",
+        record.department || "",
+        record.shift || "",
+        record.check_in || "",
+        record.check_out || "",
+        record.status || "",
+        record.overtime_minutes || 0
+      ].join(" | ")
+    )
+  ];
+  if (records.length > 36) lines.push(`Showing first 36 of ${records.length} records. Use Excel export for full data.`);
+  return buildPdfObjects(lines);
 }
 
 module.exports = { buildExcel, buildPdf };

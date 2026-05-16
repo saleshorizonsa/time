@@ -23,8 +23,8 @@ router.get("/export", async (req, res, next) => {
     }
 
     const excel = await buildExcel(records);
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", "attachment; filename=attendance-report.xlsx");
+    res.setHeader("Content-Type", "application/vnd.ms-excel; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=attendance-report.xls");
     return res.send(excel);
   } catch (error) {
     return next(error);

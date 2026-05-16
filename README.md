@@ -133,7 +133,7 @@ Direct pull on port `4370` is also available as a backup, but it requires VPN or
 
 ## Reports
 
-Excel export is generated with `exceljs`. PDF export is generated with `pdfkit`. Both use the same filtered dataset as the Employee Attendance Report page.
+Excel-compatible `.xls` and PDF exports use the same filtered dataset as the Employee Attendance Report page.
 
 ## Mobile Punch Geofence
 

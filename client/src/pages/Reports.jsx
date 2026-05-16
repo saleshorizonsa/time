@@ -44,7 +44,7 @@ export default function Reports({ helpers }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = format === "pdf" ? "attendance-report.pdf" : "attendance-report.xlsx";
+    link.download = format === "pdf" ? "attendance-report.pdf" : "attendance-report.xls";
     link.click();
     URL.revokeObjectURL(url);
   }

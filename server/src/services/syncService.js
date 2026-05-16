@@ -1,4 +1,3 @@
-const cron = require("node-cron");
 const env = require("../config/env");
 const { all, get, run } = require("../db/localDb");
 const { queryAttendance } = require("./accessService");
@@ -6,6 +5,14 @@ const { getSettings } = require("./settingsService");
 
 let isSyncing = false;
 let scheduledTask = null;
+
+function cronToIntervalMs(expression) {
+  const first = String(expression || "").trim().split(/\s+/)[0] || "*/15";
+  const everyMatch = first.match(/^\*\/(\d+)$/);
+  if (everyMatch) return Math.max(Number(everyMatch[1]), 1) * 60 * 1000;
+  if (first === "*") return 60 * 1000;
+  return 15 * 60 * 1000;
+}
 
 function toIsoDate(value) {
   if (!value) return null;
@@ -119,10 +126,10 @@ async function getSyncStatus() {
 }
 
 function scheduleSync() {
-  if (scheduledTask) scheduledTask.stop();
-  scheduledTask = cron.schedule(env.syncFrequencyCron, () => {
+  if (scheduledTask) clearInterval(scheduledTask);
+  scheduledTask = setInterval(() => {
     pullAttendanceData().catch(() => {});
-  });
+  }, cronToIntervalMs(env.syncFrequencyCron));
 }
 
 module.exports = { pullAttendanceData, getSyncStatus, scheduleSync, upsertAttendance };
