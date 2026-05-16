@@ -35,13 +35,18 @@ export async function api(path, options = {}) {
 
   if (!response.ok) {
     let message = "Request failed.";
+    let code = "";
     try {
       const payload = await response.json();
       message = payload.message || message;
+      code = payload.code || "";
     } catch {
-      message = response.statusText;
+      message = response.statusText || message;
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.code = code;
+    throw error;
   }
 
   const type = response.headers.get("content-type") || "";

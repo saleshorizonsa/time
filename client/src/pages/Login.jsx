@@ -15,7 +15,10 @@ export default function Login({ onLogin }) {
     try {
       try {
         onLogin(await api("/api/auth/supabase-login", { method: "POST", body: { email, password } }));
-      } catch {
+      } catch (supabaseError) {
+        if (supabaseError.status >= 500 || supabaseError.code === "SUPABASE_AUTH_NOT_CONFIGURED") {
+          throw supabaseError;
+        }
         onLogin(await api("/api/auth/login", { method: "POST", body: { email, password } }));
       }
     } catch (err) {

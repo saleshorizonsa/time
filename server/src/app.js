@@ -24,6 +24,25 @@ function ensureInitialized() {
   return initPromise;
 }
 
+function statusForError(error) {
+  if (error.code === "PERMISSION_DENIED") return 403;
+  if (error.code === "INVALID_PATH") return 400;
+  if (error.code === "SUPABASE_AUTH_FAILED") return 401;
+  if (error.code === "SUPABASE_AUTH_NOT_CONFIGURED") return 503;
+  if (error.code === "23505") return 409;
+  if (error.code === "28P01" || error.code === "3D000" || error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
+    return 503;
+  }
+  return 500;
+}
+
+function publicErrorMessage(error, status) {
+  if (status === 503 && (error.code === "28P01" || error.code === "3D000" || error.code === "ENOTFOUND" || error.code === "ECONNREFUSED")) {
+    return "Database is not reachable. Check Supabase database environment variables.";
+  }
+  return error.message || "Unexpected server error.";
+}
+
 function createApp() {
   const app = express();
 
@@ -32,20 +51,21 @@ function createApp() {
   app.use(express.json({ limit: "1mb" }));
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
 
-  app.use(async (req, res, next) => {
+  app.get("/api/health", (req, res) => res.json({ ok: true }));
+  app.get("/api/health/db", async (req, res, next) => {
     try {
       await ensureInitialized();
-      next();
+      await get("SELECT 1 AS ok");
+      res.json({ ok: true, database: "postgres" });
     } catch (error) {
       next(error);
     }
   });
 
-  app.get("/api/health", (req, res) => res.json({ ok: true }));
-  app.get("/api/health/db", async (req, res, next) => {
+  app.use(async (req, res, next) => {
     try {
-      await get("SELECT 1 AS ok");
-      res.json({ ok: true, database: "postgres" });
+      await ensureInitialized();
+      next();
     } catch (error) {
       next(error);
     }
@@ -68,9 +88,9 @@ function createApp() {
   });
 
   app.use((error, req, res, next) => {
-    const status = error.code === "PERMISSION_DENIED" ? 403 : error.code === "INVALID_PATH" ? 400 : 500;
+    const status = statusForError(error);
     res.status(status).json({
-      message: error.message || "Unexpected server error.",
+      message: publicErrorMessage(error, status),
       code: error.code || "SERVER_ERROR"
     });
   });
