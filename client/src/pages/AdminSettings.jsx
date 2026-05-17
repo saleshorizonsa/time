@@ -24,282 +24,360 @@ const MAPPING_KEYS = [
 
 export default function AdminSettings({ helpers }) {
   const { api } = helpers;
-  const [settings, setSettings]       = useState({});
-  const [accessSchema, setAccessSchema] = useState([]);
-  const [preview, setPreview]         = useState(null);
-  const [busy, setBusy]               = useState("");
-  const [message, setMessage]         = useState("");
-  const [error, setError]             = useState("");
+  const [settings, setSettings] = useState({});
+  const [busy, setBusy]         = useState("");
+  const [message, setMessage]   = useState("");
+  const [error, setError]       = useState("");
+
+  // Access mode: "upload" (browser file) | "odbc" (server path)
+  const [accessMode, setAccessMode] = useState("upload");
+
+  // Upload-mode state
+  const [uploadFile, setUploadFile]     = useState(null);
+  const [uploadSchema, setUploadSchema] = useState([]);   // [{name, columns, suggestedMapping}]
+  const [uploadTable, setUploadTable]   = useState("");
+  const [uploadMapping, setUploadMapping] = useState({});  // { employeeId: "ColName", ... }
+  const [uploadPreview, setUploadPreview] = useState(null);
+  const [uploadResult, setUploadResult]   = useState(null);
+
+  // ODBC-mode state
+  const [odbcSchema, setOdbcSchema]   = useState([]);
+  const [odbcPreview, setOdbcPreview] = useState(null);
 
   useEffect(() => {
     api("/api/settings").then(setSettings).catch((err) => setError(err.message));
   }, []);
 
-  function update(key, value) {
-    setSettings((s) => ({ ...s, [key]: value }));
-  }
-
+  function update(key, value) { setSettings((s) => ({ ...s, [key]: value })); }
   function notify(msg, isError = false) {
     setMessage(isError ? "" : msg);
     setError(isError ? msg : "");
   }
 
-  /* ── Step 1: Connect & discover tables ─────────────────────────── */
-  async function handleConnect() {
-    setPreview(null);
-    setBusy("connect");
-    notify("");
+  // ── Save settings ────────────────────────────────────────────────────────
+  async function save(e) {
+    e.preventDefault();
+    setBusy("save"); notify("");
+    try {
+      setSettings(await api("/api/settings", { method: "PUT", body: settings }));
+      notify("Settings saved.");
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
+  // ── Upload mode ──────────────────────────────────────────────────────────
+
+  async function handleUploadDiscover() {
+    if (!uploadFile) return;
+    setBusy("udiscover"); notify("");
+    setUploadSchema([]); setUploadTable(""); setUploadMapping({}); setUploadPreview(null); setUploadResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", uploadFile);
+      const result = await api("/api/sync/access-upload-discover", { method: "POST", body: form });
+      const tables = result.tables || [];
+      setUploadSchema(tables);
+      notify(`Connected — found ${tables.length} table${tables.length !== 1 ? "s" : ""}.`);
+      if (tables.length === 1) applyUploadTable(tables[0]);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
+  function applyUploadTable(tableObj) {
+    setUploadTable(tableObj.name);
+    // Build mapping: { employeeId: "ActualColName", ... }
+    const m = {};
+    for (const [field] of MAPPING_KEYS) {
+      m[field] = tableObj.suggestedMapping?.[field] || "";
+    }
+    setUploadMapping(m);
+    setUploadPreview(null);
+    setUploadResult(null);
+  }
+
+  function handleUploadTableChange(name) {
+    const tableObj = uploadSchema.find((t) => t.name === name);
+    if (tableObj) applyUploadTable(tableObj);
+    else setUploadTable(name);
+  }
+
+  async function handleUploadPreview() {
+    if (!uploadFile || !uploadTable) return;
+    setBusy("upreview"); notify("");
+    try {
+      const form = new FormData();
+      form.append("file", uploadFile);
+      form.append("tableName", uploadTable);
+      setUploadPreview(await api("/api/sync/access-upload-preview", { method: "POST", body: form }));
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
+  async function handleUploadImport() {
+    if (!uploadFile || !uploadTable) return;
+    setBusy("uimport"); notify(""); setUploadResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", uploadFile);
+      form.append("tableName", uploadTable);
+      form.append("mapping", JSON.stringify(uploadMapping));
+      const result = await api("/api/sync/access-upload-import", { method: "POST", body: form });
+      setUploadResult(result);
+      notify(`Import done — ${result.recordsUpserted} records synced from ${result.recordsRead} rows${result.skipped ? `, ${result.skipped} skipped (no Employee ID)` : ""}.`);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
+  const uploadColumns = uploadSchema.find((t) => t.name === uploadTable)?.columns || [];
+
+  // ── ODBC mode ────────────────────────────────────────────────────────────
+
+  async function handleOdbcConnect() {
+    setOdbcPreview(null); setBusy("oconnect"); notify("");
     try {
       const result = await api("/api/settings/access/discover", {
         method: "POST",
         body: {
-          accessDbPath:     settings.accessDbPath,
-          accessDriver:     settings.accessDriver,
-          accessDbPassword: settings.accessDbPassword,
-          accessUid:        settings.accessUid,
-          accessPwd:        settings.accessPwd
+          accessDbPath: settings.accessDbPath, accessDriver: settings.accessDriver,
+          accessDbPassword: settings.accessDbPassword, accessUid: settings.accessUid, accessPwd: settings.accessPwd
         }
       });
       const tables = result.tables || [];
-      setAccessSchema(tables);
+      setOdbcSchema(tables);
       notify(`Connected — found ${tables.length} table${tables.length !== 1 ? "s" : ""}.`);
-
-      // Auto-select the only table if there's exactly one
-      if (tables.length === 1 && !settings.accessTable) {
-        applyTableSelection(tables[0]);
-      }
-    } catch (err) {
-      notify(err.message, true);
-    } finally {
-      setBusy("");
-    }
+      if (tables.length === 1 && !settings.accessTable) applyOdbcTable(tables[0]);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
   }
 
-  /* ── Step 2: Table selected → auto-map columns ──────────────────── */
-  function applyTableSelection(tableObj) {
+  function applyOdbcTable(tableObj) {
     const updates = { accessTable: tableObj.name };
-    if (tableObj.suggestedMapping) {
-      for (const [field, settingKey] of MAPPING_KEYS) {
-        const suggested = tableObj.suggestedMapping[field];
-        if (suggested) updates[settingKey] = suggested;
-      }
+    for (const [field, settingKey] of MAPPING_KEYS) {
+      const s = tableObj.suggestedMapping?.[field];
+      if (s) updates[settingKey] = s;
     }
-    setSettings((s) => ({ ...s, ...updates }));
-    setPreview(null);
+    setSettings((prev) => ({ ...prev, ...updates }));
+    setOdbcPreview(null);
   }
 
-  function handleTableChange(tableName) {
-    const tableObj = accessSchema.find((t) => t.name === tableName);
-    if (tableObj) applyTableSelection(tableObj);
-    else update("accessTable", tableName);
-  }
-
-  const selectedTableObj = accessSchema.find((t) => t.name === settings.accessTable);
-  const availableColumns = selectedTableObj?.columns || [];
-
-  /* ── Step 3: Preview rows ───────────────────────────────────────── */
-  async function handlePreview() {
-    setBusy("preview");
-    notify("");
+  async function handleOdbcPreview() {
+    setBusy("opreview"); notify("");
     try {
       const result = await api("/api/settings/access/preview", {
         method: "POST",
-        body: {
-          accessDbPath:                settings.accessDbPath,
-          accessDriver:                settings.accessDriver,
-          accessTable:                 settings.accessTable,
-          accessDbPassword:            settings.accessDbPassword,
-          accessUid:                   settings.accessUid,
-          accessPwd:                   settings.accessPwd
-        }
+        body: { accessDbPath: settings.accessDbPath, accessDriver: settings.accessDriver,
+                accessTable: settings.accessTable, accessDbPassword: settings.accessDbPassword,
+                accessUid: settings.accessUid, accessPwd: settings.accessPwd }
       });
-      setPreview(result);
-      notify(`Preview: ${result.rows.length} row${result.rows.length !== 1 ? "s" : ""} returned.`);
-    } catch (err) {
-      notify(err.message, true);
-    } finally {
-      setBusy("");
-    }
+      setOdbcPreview(result);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
   }
 
-  /* ── Pull now ───────────────────────────────────────────────────── */
-  async function handlePullNow() {
-    setBusy("pull");
-    notify("");
+  async function handleOdbcPull() {
+    setBusy("opull"); notify("");
     try {
       await api("/api/settings", { method: "PUT", body: settings });
       const result = await api("/api/sync/pull-now", { method: "POST" });
-      notify(`Pull complete — ${result.recordsUpserted ?? result.records ?? 0} records synced.`);
-    } catch (err) {
-      notify(err.message, true);
-    } finally {
-      setBusy("");
-    }
+      notify(`Pull complete — ${result.recordsUpserted ?? 0} records synced.`);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
   }
 
-  /* ── Save all settings ──────────────────────────────────────────── */
-  async function save(event) {
-    event.preventDefault();
-    setBusy("save");
-    notify("");
-    try {
-      setSettings(await api("/api/settings", { method: "PUT", body: settings }));
-      notify("Settings saved.");
-    } catch (err) {
-      notify(err.message, true);
-    } finally {
-      setBusy("");
-    }
-  }
-
-  const isConnected = accessSchema.length > 0;
-  const hasTable    = Boolean(settings.accessTable);
+  const odbcSelectedTable = odbcSchema.find((t) => t.name === settings.accessTable);
+  const odbcColumns = odbcSelectedTable?.columns || [];
 
   return (
     <form onSubmit={save} className="space-y-5">
 
-      {/* ── Access Source ─────────────────────────────────────────── */}
+      {/* ── Microsoft Access Source ──────────────────────────────────────── */}
       <section className="rounded border border-line bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold">Microsoft Access Source</h2>
-        <p className="mt-1 text-xs text-slate-500">Enter the database path, connect to discover tables, then pull.</p>
 
-        {/* Step 1 */}
-        <div className="mt-5">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">1</span>
-            <span className="text-sm font-semibold">Database connection</span>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Field label="Database path (.accdb / .mdb)">
-              <input
-                className="input"
-                value={settings.accessDbPath || ""}
-                onChange={(e) => { update("accessDbPath", e.target.value); setAccessSchema([]); setPreview(null); }}
-                placeholder="\\REMOTE-PC\SharedFolder\attendance.accdb"
-              />
-            </Field>
-            <Field label="ODBC driver">
-              <input className="input" value={settings.accessDriver || ""} onChange={(e) => update("accessDriver", e.target.value)} />
-            </Field>
-            <Field label="Database user (optional)">
-              <input className="input" value={settings.accessUid || ""} onChange={(e) => update("accessUid", e.target.value)} />
-            </Field>
-            <Field label="Access file password (optional)">
-              <input className="input" type="password" value={settings.accessDbPassword || ""} onChange={(e) => update("accessDbPassword", e.target.value)} placeholder={settings.hasAccessPassword ? "Saved" : ""} />
-            </Field>
-          </div>
-          <button
-            type="button"
-            onClick={handleConnect}
-            disabled={!settings.accessDbPath || busy === "connect"}
-            className="mt-3 rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            {busy === "connect" ? "Connecting…" : isConnected ? "Re-connect" : "Connect & Discover Tables"}
-          </button>
+        {/* Mode toggle */}
+        <div className="mt-3 flex overflow-hidden rounded border border-line w-fit text-sm font-medium">
+          <ModeBtn active={accessMode === "upload"} onClick={() => setAccessMode("upload")}>
+            Upload File <span className="ml-1 rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 font-semibold">Any PC</span>
+          </ModeBtn>
+          <ModeBtn active={accessMode === "odbc"} onClick={() => setAccessMode("odbc")}>
+            Server ODBC <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 font-semibold">Driver required</span>
+          </ModeBtn>
         </div>
 
-        {/* Step 2 */}
-        <div className={`mt-6 transition-opacity ${isConnected ? "opacity-100" : "pointer-events-none opacity-30"}`}>
-          <div className="mb-2 flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">2</span>
-            <span className="text-sm font-semibold">Select table &amp; map columns</span>
-            {isConnected && <span className="ml-1 rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">{accessSchema.length} tables found</span>}
-          </div>
+        {/* ── Upload mode ── */}
+        {accessMode === "upload" && (
+          <div className="mt-5 space-y-5">
+            <p className="text-xs text-slate-500">
+              Browse the <strong>.mdb / .accdb</strong> file from <em>any PC on the network</em> — no ODBC driver needed.
+              The file is sent to the server and read directly.
+            </p>
 
-          <Field label="Table">
-            <select
-              className="input"
-              value={settings.accessTable || ""}
-              onChange={(e) => handleTableChange(e.target.value)}
-            >
-              <option value="">Select table…</option>
-              {accessSchema.map((t) => (
-                <option key={t.name} value={t.name}>{t.name}</option>
-              ))}
-              {!isConnected && settings.accessTable && (
-                <option value={settings.accessTable}>{settings.accessTable}</option>
-              )}
-            </select>
-          </Field>
-
-          {hasTable && (
-            <div className="mt-3">
-              <p className="mb-2 text-xs text-slate-500">
-                Columns are auto-mapped from the table. Adjust any that are wrong.
-              </p>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                {MAPPING_KEYS.map(([, settingKey]) => (
-                  <ColumnField
-                    key={settingKey}
-                    label={FIELD_LABELS[settingKey]}
-                    value={settings[settingKey]}
-                    options={availableColumns}
-                    onChange={(v) => update(settingKey, v)}
-                  />
-                ))}
+            {/* Step 1 */}
+            <Step n={1} label="Pick the Access database file">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="file"
+                  accept=".mdb,.accdb"
+                  className="block rounded border border-line p-2 text-sm"
+                  onChange={(e) => {
+                    setUploadFile(e.target.files?.[0] || null);
+                    setUploadSchema([]); setUploadTable(""); setUploadMapping({});
+                    setUploadPreview(null); setUploadResult(null);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleUploadDiscover}
+                  disabled={!uploadFile || busy === "udiscover"}
+                  className="rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {busy === "udiscover" ? "Reading…" : uploadSchema.length ? "Re-read" : "Read Tables"}
+                </button>
               </div>
-            </div>
-          )}
-        </div>
+            </Step>
 
-        {/* Step 3 */}
-        <div className={`mt-6 transition-opacity ${hasTable ? "opacity-100" : "pointer-events-none opacity-30"}`}>
-          <div className="mb-2 flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">3</span>
-            <span className="text-sm font-semibold">Preview &amp; pull</span>
-          </div>
+            {/* Step 2 */}
+            <div className={uploadSchema.length === 0 ? "opacity-30 pointer-events-none" : ""}>
+              <Step n={2} label={`Select table & verify column mapping ${uploadSchema.length ? `(${uploadSchema.length} tables found)` : ""}`}>
+                <Field label="Table">
+                  <select className="input" value={uploadTable} onChange={(e) => handleUploadTableChange(e.target.value)}>
+                    <option value="">Select table…</option>
+                    {uploadSchema.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                  </select>
+                </Field>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handlePreview}
-              disabled={!hasTable || busy === "preview"}
-              className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50"
-            >
-              {busy === "preview" ? "Loading…" : "Preview 10 Rows"}
-            </button>
-            <button
-              type="button"
-              onClick={handlePullNow}
-              disabled={!hasTable || busy === "pull"}
-              className="rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {busy === "pull" ? "Pulling…" : "Pull Now"}
-            </button>
-          </div>
-
-          {/* Preview table */}
-          {preview && (
-            <div className="mt-4 overflow-x-auto rounded border border-line">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr>
-                    {preview.columns.map((c) => (
-                      <th key={c} className="px-3 py-2 text-left font-semibold text-slate-600">{c}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.rows.map((row, i) => (
-                    <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                      {row.map((cell, j) => (
-                        <td key={j} className="px-3 py-1.5 text-slate-700">
-                          {cell === null || cell === undefined ? <span className="text-slate-400">—</span> : String(cell)}
-                        </td>
+                {uploadTable && (
+                  <div className="mt-3">
+                    <p className="mb-2 text-xs text-slate-500">Columns auto-matched — adjust any that are wrong.</p>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      {MAPPING_KEYS.map(([field, , label]) => (
+                        <Field key={field} label={FIELD_LABELS[`access${field.charAt(0).toUpperCase() + field.slice(1)}Column`] || field}>
+                          {uploadColumns.length ? (
+                            <select
+                              className="input"
+                              value={uploadMapping[field] || ""}
+                              onChange={(e) => setUploadMapping((m) => ({ ...m, [field]: e.target.value }))}
+                            >
+                              <option value="">Not mapped</option>
+                              {uploadColumns.map((c) => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          ) : (
+                            <input
+                              className="input"
+                              value={uploadMapping[field] || ""}
+                              onChange={(e) => setUploadMapping((m) => ({ ...m, [field]: e.target.value }))}
+                            />
+                          )}
+                        </Field>
                       ))}
-                    </tr>
-                  ))}
-                  {preview.rows.length === 0 && (
-                    <tr><td colSpan={preview.columns.length} className="px-3 py-3 text-center text-slate-400">No rows returned</td></tr>
-                  )}
-                </tbody>
-              </table>
+                    </div>
+                  </div>
+                )}
+              </Step>
             </div>
-          )}
-        </div>
+
+            {/* Step 3 */}
+            <div className={!uploadTable ? "opacity-30 pointer-events-none" : ""}>
+              <Step n={3} label="Preview &amp; import">
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={handleUploadPreview} disabled={!uploadTable || busy === "upreview"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
+                    {busy === "upreview" ? "Loading…" : "Preview 10 Rows"}
+                  </button>
+                  <button type="button" onClick={handleUploadImport} disabled={!uploadTable || busy === "uimport"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                    {busy === "uimport" ? "Importing…" : "Import Now"}
+                  </button>
+                </div>
+
+                {uploadResult && (
+                  <div className="mt-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                    <strong>Import complete</strong> — {uploadResult.recordsUpserted} records upserted from {uploadResult.recordsRead} rows
+                    {uploadResult.skipped > 0 && `, ${uploadResult.skipped} skipped (no Employee ID)`}.
+                  </div>
+                )}
+
+                {uploadPreview && <PreviewTable data={uploadPreview} />}
+              </Step>
+            </div>
+          </div>
+        )}
+
+        {/* ── ODBC mode ── */}
+        {accessMode === "odbc" && (
+          <div className="mt-5 space-y-5">
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Requires the <strong>Microsoft Access ODBC driver</strong> installed on the machine running this server.
+              If you're getting "ODBC unavailable", switch to <strong>Upload File</strong> mode instead.
+            </div>
+
+            {/* Step 1 */}
+            <Step n={1} label="Database connection">
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="Database path (.accdb / .mdb)">
+                  <input className="input" value={settings.accessDbPath || ""} onChange={(e) => { update("accessDbPath", e.target.value); setOdbcSchema([]); setOdbcPreview(null); }} placeholder="\\192.168.1.10\Share\att2000.mdb" />
+                </Field>
+                <Field label="ODBC driver">
+                  <input className="input" value={settings.accessDriver || ""} onChange={(e) => update("accessDriver", e.target.value)} />
+                </Field>
+                <Field label="Database user (optional)">
+                  <input className="input" value={settings.accessUid || ""} onChange={(e) => update("accessUid", e.target.value)} />
+                </Field>
+                <Field label="File password (optional)">
+                  <input className="input" type="password" value={settings.accessDbPassword || ""} onChange={(e) => update("accessDbPassword", e.target.value)} placeholder={settings.hasAccessPassword ? "Saved" : ""} />
+                </Field>
+              </div>
+              <button type="button" onClick={handleOdbcConnect} disabled={!settings.accessDbPath || busy === "oconnect"} className="mt-3 rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                {busy === "oconnect" ? "Connecting…" : odbcSchema.length ? "Re-connect" : "Connect & Discover Tables"}
+              </button>
+            </Step>
+
+            {/* Step 2 */}
+            <div className={odbcSchema.length === 0 ? "opacity-30 pointer-events-none" : ""}>
+              <Step n={2} label={`Select table & map columns ${odbcSchema.length ? `(${odbcSchema.length} tables)` : ""}`}>
+                <Field label="Table">
+                  <select className="input" value={settings.accessTable || ""} onChange={(e) => { const t = odbcSchema.find((x) => x.name === e.target.value); if (t) applyOdbcTable(t); else update("accessTable", e.target.value); }}>
+                    <option value="">Select table…</option>
+                    {odbcSchema.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                    {!odbcSchema.length && settings.accessTable && <option value={settings.accessTable}>{settings.accessTable}</option>}
+                  </select>
+                </Field>
+                {settings.accessTable && (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {MAPPING_KEYS.map(([, settingKey]) => (
+                      <Field key={settingKey} label={FIELD_LABELS[settingKey]}>
+                        {odbcColumns.length ? (
+                          <select className="input" value={settings[settingKey] || ""} onChange={(e) => update(settingKey, e.target.value)}>
+                            <option value="">Not mapped</option>
+                            {odbcColumns.map((c) => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        ) : (
+                          <input className="input" value={settings[settingKey] || ""} onChange={(e) => update(settingKey, e.target.value)} />
+                        )}
+                      </Field>
+                    ))}
+                  </div>
+                )}
+              </Step>
+            </div>
+
+            {/* Step 3 */}
+            <div className={!settings.accessTable ? "opacity-30 pointer-events-none" : ""}>
+              <Step n={3} label="Preview &amp; pull">
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={handleOdbcPreview} disabled={!settings.accessTable || busy === "opreview"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
+                    {busy === "opreview" ? "Loading…" : "Preview 10 Rows"}
+                  </button>
+                  <button type="button" onClick={handleOdbcPull} disabled={!settings.accessTable || busy === "opull"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                    {busy === "opull" ? "Pulling…" : "Save & Pull Now"}
+                  </button>
+                </div>
+                {odbcPreview && <PreviewTable data={odbcPreview} />}
+              </Step>
+            </div>
+          </div>
+        )}
       </section>
 
-      {/* ── Remote sync schedule ────────────────────────────────────── */}
+      {/* ── Remote sync schedule ─────────────────────────────────────────── */}
       <section className="rounded border border-line bg-white p-4 shadow-sm">
         <h2 className="text-base font-semibold">Remote Sync Schedule</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -315,7 +393,7 @@ export default function AdminSettings({ helpers }) {
         </div>
       </section>
 
-      {/* ── ZKTeco ──────────────────────────────────────────────────── */}
+      {/* ── ZKTeco ──────────────────────────────────────────────────────────── */}
       <section className="rounded border border-line bg-white p-4 shadow-sm">
         <h2 className="text-base font-semibold">ZKTeco MB20</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -353,7 +431,7 @@ export default function AdminSettings({ helpers }) {
         </div>
       </section>
 
-      {/* ── Mobile punch geofence ────────────────────────────────────── */}
+      {/* ── Mobile punch geofence ─────────────────────────────────────────── */}
       <section className="rounded border border-line bg-white p-4 shadow-sm">
         <h2 className="text-base font-semibold">Mobile Punch Geofence</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -382,6 +460,32 @@ export default function AdminSettings({ helpers }) {
   );
 }
 
+// ── Small shared components ───────────────────────────────────────────────────
+
+function ModeBtn({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-4 py-2 text-sm transition-colors ${active ? "bg-brand text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Step({ n, label, children }) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-2">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">{n}</span>
+        <span className="text-sm font-semibold" dangerouslySetInnerHTML={{ __html: label }} />
+      </div>
+      <div className="pl-8">{children}</div>
+    </div>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <label className="block text-sm font-medium">
@@ -391,17 +495,31 @@ function Field({ label, children }) {
   );
 }
 
-function ColumnField({ label, value, options, onChange }) {
+function PreviewTable({ data }) {
+  if (!data) return null;
   return (
-    <Field label={label}>
-      {options.length ? (
-        <select className="input" value={value || ""} onChange={(e) => onChange(e.target.value)}>
-          <option value="">Not mapped</option>
-          {options.map((col) => <option key={col} value={col}>{col}</option>)}
-        </select>
-      ) : (
-        <input className="input" value={value || ""} onChange={(e) => onChange(e.target.value)} />
-      )}
-    </Field>
+    <div className="mt-4 overflow-x-auto rounded border border-line">
+      <table className="w-full text-xs">
+        <thead className="bg-slate-50">
+          <tr>
+            {data.columns.map((c) => <th key={c} className="px-3 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{c}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {data.rows.map((row, i) => (
+            <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+              {row.map((cell, j) => (
+                <td key={j} className="px-3 py-1.5 text-slate-700 whitespace-nowrap">
+                  {cell == null ? <span className="text-slate-300">—</span> : cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {data.rows.length === 0 && (
+            <tr><td colSpan={data.columns.length} className="px-3 py-3 text-center text-slate-400">No rows</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
