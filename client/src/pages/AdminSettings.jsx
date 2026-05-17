@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { getToken } from "../lib/api";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "";
 
 const FIELD_LABELS = {
   accessEmployeeIdColumn:      "Employee ID",
@@ -33,12 +36,14 @@ export default function AdminSettings({ helpers }) {
   const [accessMode, setAccessMode] = useState("upload");
 
   // Upload-mode state
-  const [uploadFile, setUploadFile]     = useState(null);
-  const [uploadSchema, setUploadSchema] = useState([]);   // [{name, columns, suggestedMapping}]
-  const [uploadTable, setUploadTable]   = useState("");
-  const [uploadMapping, setUploadMapping] = useState({});  // { employeeId: "ColName", ... }
+  const [uploadFile, setUploadFile]       = useState(null);
+  const [uploadSchema, setUploadSchema]   = useState([]);
+  const [uploadTable, setUploadTable]     = useState("");
+  const [uploadMapping, setUploadMapping] = useState({});
   const [uploadPreview, setUploadPreview] = useState(null);
   const [uploadResult, setUploadResult]   = useState(null);
+  const [importProgress, setImportProgress] = useState(null); // { phase, uploadPct, done, total }
+  const xhrRef = useRef(null);
 
   // ODBC-mode state
   const [odbcSchema, setOdbcSchema]   = useState([]);
@@ -113,19 +118,59 @@ export default function AdminSettings({ helpers }) {
     finally { setBusy(""); }
   }
 
-  async function handleUploadImport() {
+  function handleUploadImport() {
     if (!uploadFile || !uploadTable) return;
-    setBusy("uimport"); notify(""); setUploadResult(null);
-    try {
-      const form = new FormData();
-      form.append("file", uploadFile);
-      form.append("tableName", uploadTable);
-      form.append("mapping", JSON.stringify(uploadMapping));
-      const result = await api("/api/sync/access-upload-import", { method: "POST", body: form });
-      setUploadResult(result);
-      notify(`Import done — ${result.recordsUpserted} records synced from ${result.recordsRead} rows${result.skipped ? `, ${result.skipped} skipped (no Employee ID)` : ""}.`);
-    } catch (err) { notify(err.message, true); }
-    finally { setBusy(""); }
+    setBusy("uimport"); notify(""); setUploadResult(null); setImportProgress(null);
+
+    const form = new FormData();
+    form.append("file", uploadFile);
+    form.append("tableName", uploadTable);
+    form.append("mapping", JSON.stringify(uploadMapping));
+
+    const xhr = new XMLHttpRequest();
+    xhrRef.current = xhr;
+    xhr.open("POST", `${API_BASE}/api/sync/access-upload-import`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    // Phase 1 — upload progress
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        setImportProgress({ phase: "upload", uploadPct: Math.round((e.loaded / e.total) * 100) });
+      }
+    };
+
+    // Phase 2 — streaming processing progress (NDJSON lines)
+    let lastIdx = 0;
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState >= 3 && xhr.responseText) {
+        const newText = xhr.responseText.slice(lastIdx);
+        lastIdx = xhr.responseText.length;
+        for (const line of newText.split("\n").filter(Boolean)) {
+          try {
+            const p = JSON.parse(line);
+            if (p.error) { notify(p.error, true); return; }
+            setImportProgress((prev) => ({ ...(prev || {}), ...p }));
+            if (p.status === "done") {
+              setUploadResult(p);
+              notify(`Import done — ${p.upserted} records synced from ${p.total} rows${p.skipped ? `, ${p.skipped} skipped` : ""}.`);
+            }
+          } catch { /* partial line */ }
+        }
+      }
+      if (xhr.readyState === 4) {
+        if (xhr.status !== 200 && !uploadResult) notify(`Import failed (${xhr.status})`, true);
+        setBusy("");
+      }
+    };
+
+    xhr.send(form);
+  }
+
+  function cancelImport() {
+    xhrRef.current?.abort();
+    setBusy(""); setImportProgress(null);
+    notify("Import cancelled.");
   }
 
   const uploadColumns = uploadSchema.find((t) => t.name === uploadTable)?.columns || [];
@@ -280,17 +325,42 @@ export default function AdminSettings({ helpers }) {
             <div className={!uploadTable ? "opacity-30 pointer-events-none" : ""}>
               <Step n={3} label="Preview &amp; import">
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={handleUploadPreview} disabled={!uploadTable || busy === "upreview"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
+                  <button type="button" onClick={handleUploadPreview} disabled={!uploadTable || busy === "upreview" || busy === "uimport"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
                     {busy === "upreview" ? "Loading…" : "Preview 10 Rows"}
                   </button>
-                  <button type="button" onClick={handleUploadImport} disabled={!uploadTable || busy === "uimport"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                    {busy === "uimport" ? "Importing…" : "Import Now"}
-                  </button>
+                  {busy === "uimport" ? (
+                    <button type="button" onClick={cancelImport} className="rounded border border-red-300 bg-red-50 px-5 py-2 text-sm font-semibold text-bad">
+                      Cancel
+                    </button>
+                  ) : (
+                    <button type="button" onClick={handleUploadImport} disabled={!uploadTable} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                      Import Now
+                    </button>
+                  )}
                 </div>
+
+                {/* Live progress */}
+                {importProgress && !uploadResult && (
+                  <div className="mt-4 space-y-2">
+                    {importProgress.phase === "upload" ? (
+                      <ProgressBar
+                        label={`Uploading file… ${importProgress.uploadPct ?? 0}%`}
+                        value={importProgress.uploadPct ?? 0}
+                        color="bg-blue-500"
+                      />
+                    ) : (
+                      <ProgressBar
+                        label={`Processing ${(importProgress.done ?? 0).toLocaleString()} / ${(importProgress.total ?? 0).toLocaleString()} rows — ${importProgress.upserted ?? 0} synced`}
+                        value={importProgress.total ? Math.round(((importProgress.done ?? 0) / importProgress.total) * 100) : 0}
+                        color="bg-brand"
+                      />
+                    )}
+                  </div>
+                )}
 
                 {uploadResult && (
                   <div className="mt-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                    <strong>Import complete</strong> — {uploadResult.recordsUpserted} records upserted from {uploadResult.recordsRead} rows
+                    <strong>Import complete</strong> — {(uploadResult.upserted ?? 0).toLocaleString()} records synced from {(uploadResult.total ?? 0).toLocaleString()} rows
                     {uploadResult.skipped > 0 && `, ${uploadResult.skipped} skipped (no Employee ID)`}.
                   </div>
                 )}
@@ -492,6 +562,23 @@ function Field({ label, children }) {
       <span className="mb-1 block">{label}</span>
       {children}
     </label>
+  );
+}
+
+function ProgressBar({ label, value, color = "bg-brand" }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+        <span>{label}</span>
+        <span className="font-semibold">{value}%</span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${color}`}
+          style={{ width: `${Math.min(100, value)}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

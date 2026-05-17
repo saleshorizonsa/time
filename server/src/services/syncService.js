@@ -1,5 +1,5 @@
 const env = require("../config/env");
-const { all, get, run } = require("../db/localDb");
+const { db, all, get, run } = require("../db/localDb");
 const { queryAttendance } = require("./accessService");
 const { getSettings } = require("./settingsService");
 const { computeShiftMetrics, getTimeOfDayMinutes } = require("../utils/shiftCalc");
@@ -222,11 +222,123 @@ function scheduleSync() {
   }, cronToIntervalMs(env.syncFrequencyCron));
 }
 
+/**
+ * High-throughput batch upsert for file-based Access import.
+ * Uses 3 DB round-trips per batch (1 SELECT + 1 INSERT + 1 UPDATE)
+ * instead of 2 queries per row.
+ *
+ * rows: array of { sourceId, employeeId, employeeName, department, shift,
+ *                  checkIn, checkOut, status, lateMinutes, earlyOutMinutes, overtimeMinutes }
+ */
+async function batchUpsertMdbRows(rows) {
+  const prepared = rows
+    .map((row) => {
+      const checkIn  = toIsoDateTime(row.checkIn);
+      const checkOut = toIsoDateTime(row.checkOut);
+      const date     = toIsoDate(row.checkIn || row.checkOut);
+      if (!row.employeeId || !date) return null;
+      return {
+        sourceId:        row.sourceId,
+        employeeId:      String(row.employeeId),
+        employeeName:    row.employeeName    || "",
+        department:      row.department      || "",
+        shift:           row.shift           || "",
+        date,
+        checkIn,
+        checkOut,
+        status:          normalizeStatus(row),
+        lateMinutes:     Number(row.lateMinutes     ?? 0),
+        earlyOutMinutes: Number(row.earlyOutMinutes ?? 0),
+        overtimeMinutes: Number(row.overtimeMinutes ?? 0)
+      };
+    })
+    .filter(Boolean);
+
+  if (!prepared.length) return 0;
+
+  // 1. Find which source_ids already exist (single round-trip via ANY array)
+  const sourceIds = prepared.map((r) => r.sourceId);
+  const { rows: existingRows } = await db.query(
+    "SELECT source_id FROM attendance_records WHERE source_id = ANY($1)",
+    [sourceIds]
+  );
+  const existingSet = new Set(existingRows.map((r) => r.source_id));
+
+  const toInsert = prepared.filter((r) => !existingSet.has(r.sourceId));
+  const toUpdate = prepared.filter((r) =>  existingSet.has(r.sourceId));
+
+  // 2. Batch INSERT all new rows in a single query
+  if (toInsert.length) {
+    const N = 13;
+    const ph = toInsert.map((_, i) => {
+      const b = i * N;
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10},$${b+11},$${b+12},NOW())`;
+    }).join(",");
+    const params = toInsert.flatMap((r) => [
+      r.sourceId, r.employeeId, r.employeeName, r.department, r.shift,
+      r.date, r.checkIn, r.checkOut, r.status,
+      r.overtimeMinutes, r.earlyOutMinutes, r.lateMinutes
+    ]);
+    await db.query(
+      `INSERT INTO attendance_records
+         (source_id, employee_id, employee_name, department, shift, attendance_date,
+          check_in, check_out, status, overtime_minutes, early_out_minutes, late_minutes, synced_at)
+       VALUES ${ph}`,
+      params
+    );
+  }
+
+  // 3. Batch UPDATE existing rows using unnest() — single round-trip
+  if (toUpdate.length) {
+    await db.query(
+      `UPDATE attendance_records ar SET
+         employee_name    = v.employee_name,
+         department       = v.department,
+         shift            = v.shift,
+         check_in         = COALESCE(v.check_in,  ar.check_in),
+         check_out        = COALESCE(v.check_out, ar.check_out),
+         status           = v.status,
+         overtime_minutes  = v.ot::int,
+         early_out_minutes = v.eo::int,
+         late_minutes      = v.lm::int,
+         synced_at        = NOW()
+       FROM (SELECT
+         unnest($1::text[]) AS source_id,
+         unnest($2::text[]) AS employee_name,
+         unnest($3::text[]) AS department,
+         unnest($4::text[]) AS shift,
+         unnest($5::text[]) AS check_in,
+         unnest($6::text[]) AS check_out,
+         unnest($7::text[]) AS status,
+         unnest($8::int[])  AS ot,
+         unnest($9::int[])  AS eo,
+         unnest($10::int[]) AS lm
+       ) v
+       WHERE ar.source_id = v.source_id`,
+      [
+        toUpdate.map((r) => r.sourceId),
+        toUpdate.map((r) => r.employeeName),
+        toUpdate.map((r) => r.department),
+        toUpdate.map((r) => r.shift),
+        toUpdate.map((r) => r.checkIn),
+        toUpdate.map((r) => r.checkOut),
+        toUpdate.map((r) => r.status),
+        toUpdate.map((r) => r.overtimeMinutes),
+        toUpdate.map((r) => r.earlyOutMinutes),
+        toUpdate.map((r) => r.lateMinutes)
+      ]
+    );
+  }
+
+  return prepared.length;
+}
+
 module.exports = {
   pullAttendanceData,
   getSyncStatus,
   scheduleSync,
   upsertAttendance,
   upsertBySourceId,
+  batchUpsertMdbRows,
   calculateShiftMetrics
 };
