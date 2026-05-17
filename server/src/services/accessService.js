@@ -1,4 +1,5 @@
 const fs = require("fs");
+const { execSync } = require("child_process");
 const env = require("../config/env");
 
 const COLUMN_PATTERNS = {
@@ -50,11 +51,21 @@ function sanitizePath(raw) {
 }
 
 function buildConnectionString(settings = {}) {
+  const uid = settings.accessUid || env.access.uid;
+  const password = settings.accessDbPassword || env.access.password;
+  const pwd = settings.accessPwd || env.access.pwd;
+
+  // DSN-based connection — no path or driver needed
+  if (settings.accessDsn) {
+    const parts = [`DSN=${settings.accessDsn}`];
+    if (uid) parts.push(`UID=${uid}`);
+    if (password) parts.push(`PWD=${password}`);
+    else if (pwd) parts.push(`PWD=${pwd}`);
+    return parts.join(";");
+  }
+
   const dbPath = sanitizePath(settings.accessDbPath || env.access.dbPath);
   const driver = settings.accessDriver || env.access.driver;
-  const password = settings.accessDbPassword || env.access.password;
-  const uid = settings.accessUid || env.access.uid;
-  const pwd = settings.accessPwd || env.access.pwd;
 
   if (!dbPath) {
     throw new Error("Access database path is not configured.");
@@ -67,7 +78,8 @@ function buildConnectionString(settings = {}) {
   return parts.join(";");
 }
 
-function validateDbPath(dbPath) {
+function validateDbPath(dbPath, hasDsn = false) {
+  if (hasDsn) return ""; // DSN handles its own connectivity
   const clean = sanitizePath(dbPath);
 
   if (!clean) {
@@ -111,7 +123,7 @@ async function queryAttendance(settings = {}) {
     status: settings.accessStatusColumn || env.access.columns.status,
     overtimeMinutes: settings.accessOvertimeMinutesColumn || env.access.columns.overtimeMinutes
   };
-  validateDbPath(settings.accessDbPath || env.access.dbPath);
+  validateDbPath(settings.accessDbPath || env.access.dbPath, Boolean(settings.accessDsn));
 
   for (const [label, settingKey] of requiredMappings) {
     if (!columns[label]) {
@@ -154,7 +166,7 @@ async function queryAttendance(settings = {}) {
 }
 
 async function discoverAccessSchema(settings = {}) {
-  validateDbPath(settings.accessDbPath || env.access.dbPath);
+  validateDbPath(settings.accessDbPath || env.access.dbPath, Boolean(settings.accessDsn));
 
   let connection;
   try {
@@ -189,7 +201,7 @@ async function discoverAccessSchema(settings = {}) {
 async function getTablePreview(settings = {}, limit = 10) {
   const table = settings.accessTable || env.access.table;
   if (!table) throw Object.assign(new Error("No table selected."), { code: "INVALID_MAPPING" });
-  validateDbPath(settings.accessDbPath || env.access.dbPath);
+  validateDbPath(settings.accessDbPath || env.access.dbPath, Boolean(settings.accessDsn));
 
   let connection;
   try {
@@ -206,4 +218,42 @@ async function getTablePreview(settings = {}, limit = 10) {
   }
 }
 
-module.exports = { autoMapColumns, buildConnectionString, discoverAccessSchema, getTablePreview, queryAttendance, validateDbPath };
+// Read installed ODBC drivers from Windows registry (Access-related only)
+function getInstalledAccessDrivers() {
+  if (process.platform !== "win32") return [];
+  try {
+    const out = execSync(
+      'reg query "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\ODBC Drivers"',
+      { encoding: "utf8", windowsHide: true, timeout: 3000 }
+    );
+    return out.split(/\r?\n/)
+      .filter((l) => /access/i.test(l) && /REG_SZ/i.test(l))
+      .map((l) => {
+        const m = l.trim().match(/^(.+?)\s{2,}REG_SZ\s{2,}Installed$/i);
+        return m ? m[1].trim() : null;
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// Enumerate all Access ODBC drivers installed and DSNs configured on this machine
+async function discoverOdbcSources() {
+  const odbc = loadOdbc(); // throws ODBC_UNAVAILABLE if package missing
+  const drivers = getInstalledAccessDrivers();
+
+  let allDsns = [];
+  try {
+    allDsns = await odbc.datasources();
+  } catch { /* datasources() may not be supported in all odbc builds */ }
+
+  const ACCESS_RE = /access/i;
+  const dsns = allDsns
+    .map((d) => ({ name: d.name || d.server || "", description: d.description || "" }))
+    .filter((d) => d.name && (ACCESS_RE.test(d.description) || ACCESS_RE.test(d.name)));
+
+  return { dsns, drivers };
+}
+
+module.exports = { autoMapColumns, buildConnectionString, discoverAccessSchema, discoverOdbcSources, getTablePreview, queryAttendance, validateDbPath };

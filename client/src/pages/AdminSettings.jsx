@@ -46,8 +46,9 @@ export default function AdminSettings({ helpers }) {
   const xhrRef = useRef(null);
 
   // ODBC-mode state
-  const [odbcSchema, setOdbcSchema]   = useState([]);
-  const [odbcPreview, setOdbcPreview] = useState(null);
+  const [odbcSchema, setOdbcSchema]         = useState([]);
+  const [odbcPreview, setOdbcPreview]       = useState(null);
+  const [detectedSources, setDetectedSources] = useState(null); // { dsns, drivers }
 
   useEffect(() => {
     api("/api/settings").then(setSettings).catch((err) => setError(err.message));
@@ -198,14 +199,41 @@ export default function AdminSettings({ helpers }) {
 
   // ── ODBC mode ────────────────────────────────────────────────────────────
 
+  async function handleDetectSources() {
+    setBusy("odetect"); notify("");
+    try {
+      const result = await api("/api/settings/access/odbc-sources");
+      setDetectedSources(result);
+      if (result.drivers.length && !settings.accessDriver) {
+        update("accessDriver", result.drivers[0]);
+      }
+      const dsnLabel = `${result.dsns.length} DSN${result.dsns.length !== 1 ? "s" : ""}`;
+      const drvLabel = `${result.drivers.length} driver${result.drivers.length !== 1 ? "s" : ""}`;
+      notify(`Detected: ${dsnLabel}, ${drvLabel}.`);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
+  function applyDsn(dsn) {
+    update("accessDsn", dsn.name);
+    if (detectedSources?.drivers?.length) update("accessDriver", detectedSources.drivers[0]);
+    setOdbcSchema([]); setOdbcPreview(null);
+  }
+
+  function clearDsn() {
+    update("accessDsn", "");
+    setOdbcSchema([]); setOdbcPreview(null);
+  }
+
   async function handleOdbcConnect() {
     setOdbcPreview(null); setBusy("oconnect"); notify("");
     try {
       const result = await api("/api/settings/access/discover", {
         method: "POST",
         body: {
-          accessDbPath: settings.accessDbPath, accessDriver: settings.accessDriver,
-          accessDbPassword: settings.accessDbPassword, accessUid: settings.accessUid, accessPwd: settings.accessPwd
+          accessDsn: settings.accessDsn, accessDbPath: settings.accessDbPath,
+          accessDriver: settings.accessDriver, accessDbPassword: settings.accessDbPassword,
+          accessUid: settings.accessUid, accessPwd: settings.accessPwd
         }
       });
       const tables = result.tables || [];
@@ -231,9 +259,10 @@ export default function AdminSettings({ helpers }) {
     try {
       const result = await api("/api/settings/access/preview", {
         method: "POST",
-        body: { accessDbPath: settings.accessDbPath, accessDriver: settings.accessDriver,
-                accessTable: settings.accessTable, accessDbPassword: settings.accessDbPassword,
-                accessUid: settings.accessUid, accessPwd: settings.accessPwd }
+        body: { accessDsn: settings.accessDsn, accessDbPath: settings.accessDbPath,
+                accessDriver: settings.accessDriver, accessTable: settings.accessTable,
+                accessDbPassword: settings.accessDbPassword, accessUid: settings.accessUid,
+                accessPwd: settings.accessPwd }
       });
       setOdbcPreview(result);
     } catch (err) { notify(err.message, true); }
@@ -414,13 +443,60 @@ export default function AdminSettings({ helpers }) {
 
             {/* Step 1 */}
             <Step n={1} label="Database connection">
-              <div className="grid gap-3 md:grid-cols-2">
-                <Field label="Database path (.accdb / .mdb)">
-                  <input className="input" value={settings.accessDbPath || ""} onChange={(e) => { update("accessDbPath", e.target.value); setOdbcSchema([]); setOdbcPreview(null); }} placeholder="\\192.168.1.10\Share\att2000.mdb" />
-                </Field>
-                <Field label="ODBC driver">
-                  <input className="input" value={settings.accessDriver || ""} onChange={(e) => update("accessDriver", e.target.value)} />
-                </Field>
+
+              {/* Detect button */}
+              <div className="mb-4">
+                <button type="button" onClick={handleDetectSources} disabled={busy === "odetect"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50 hover:border-brand hover:text-brand transition-colors">
+                  {busy === "odetect" ? "Detecting…" : "Detect Available ODBC Connections"}
+                </button>
+              </div>
+
+              {/* Detected sources panel */}
+              {detectedSources && (
+                <div className="mb-4 rounded border border-line bg-slate-50 p-3 space-y-2">
+                  {detectedSources.drivers.length > 0 ? (
+                    <p className="text-xs font-semibold text-green-700">✓ Access driver installed: {detectedSources.drivers[0]}</p>
+                  ) : (
+                    <p className="text-xs text-amber-700 font-semibold">⚠ No Access ODBC driver found in registry</p>
+                  )}
+                  {detectedSources.dsns.length > 0 ? (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-600 mb-1.5">Pre-configured DSNs — click to select:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {detectedSources.dsns.map((dsn) => (
+                          <button key={dsn.name} type="button" onClick={() => applyDsn(dsn)}
+                            className={`rounded border px-3 py-1.5 text-xs font-semibold transition-colors ${settings.accessDsn === dsn.name ? "border-brand bg-brand text-white" : "border-line bg-white hover:border-brand hover:text-brand"}`}>
+                            {dsn.name}
+                            {dsn.description && <span className="ml-1.5 font-normal opacity-70">{dsn.description}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">No pre-configured Access DSNs found — enter the database path below.</p>
+                  )}
+                </div>
+              )}
+
+              {/* DSN indicator OR path/driver fields */}
+              {settings.accessDsn ? (
+                <div className="mb-3 flex flex-wrap items-center gap-3">
+                  <span className="rounded border border-brand bg-brand/5 px-3 py-1.5 text-sm font-semibold text-brand">DSN: {settings.accessDsn}</span>
+                  <button type="button" onClick={clearDsn} className="text-xs text-slate-500 underline hover:text-bad">Clear — use path instead</button>
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 mb-3">
+                  <Field label="Database path (.accdb / .mdb)">
+                    <input className="input" value={settings.accessDbPath || ""} onChange={(e) => { update("accessDbPath", e.target.value); setOdbcSchema([]); setOdbcPreview(null); }} placeholder="\\192.168.1.10\Share\att2000.mdb" />
+                  </Field>
+                  <Field label="ODBC driver">
+                    <input className="input" value={settings.accessDriver || ""} onChange={(e) => update("accessDriver", e.target.value)} />
+                  </Field>
+                </div>
+              )}
+
+              {/* Auth (shown in both modes) */}
+              <div className="grid gap-3 md:grid-cols-2 mb-3">
                 <Field label="Database user (optional)">
                   <input className="input" value={settings.accessUid || ""} onChange={(e) => update("accessUid", e.target.value)} />
                 </Field>
@@ -428,7 +504,8 @@ export default function AdminSettings({ helpers }) {
                   <input className="input" type="password" value={settings.accessDbPassword || ""} onChange={(e) => update("accessDbPassword", e.target.value)} placeholder={settings.hasAccessPassword ? "Saved" : ""} />
                 </Field>
               </div>
-              <button type="button" onClick={handleOdbcConnect} disabled={!settings.accessDbPath || busy === "oconnect"} className="mt-3 rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+
+              <button type="button" onClick={handleOdbcConnect} disabled={(!settings.accessDbPath && !settings.accessDsn) || busy === "oconnect"} className="rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
                 {busy === "oconnect" ? "Connecting…" : odbcSchema.length ? "Re-connect" : "Connect & Discover Tables"}
               </button>
             </Step>

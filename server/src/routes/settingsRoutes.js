@@ -1,7 +1,7 @@
 const express = require("express");
 const env = require("../config/env");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { discoverAccessSchema, getTablePreview } = require("../services/accessService");
+const { discoverAccessSchema, discoverOdbcSources, getTablePreview } = require("../services/accessService");
 const { getSettings, saveSettings } = require("../services/settingsService");
 
 const router = express.Router();
@@ -11,6 +11,7 @@ router.get("/", async (req, res, next) => {
   try {
     const saved = await getSettings();
     res.json({
+      accessDsn:    saved.accessDsn    || "",
       accessDbPath: saved.accessDbPath || env.access.dbPath,
       accessDriver: saved.accessDriver || env.access.driver,
       accessTable: saved.accessTable || env.access.table,
@@ -50,6 +51,7 @@ router.get("/", async (req, res, next) => {
 router.put("/", requireRole("Admin"), async (req, res, next) => {
   try {
     const allowed = [
+      "accessDsn",
       "accessDbPath",
       "accessDriver",
       "accessTable",
@@ -86,6 +88,14 @@ router.put("/", requireRole("Admin"), async (req, res, next) => {
       if (Object.prototype.hasOwnProperty.call(req.body, key)) payload[key] = req.body[key];
     });
     res.json(await saveSettings(payload));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/access/odbc-sources", requireRole("Admin"), async (req, res, next) => {
+  try {
+    res.json(await discoverOdbcSources());
   } catch (error) {
     next(error);
   }
