@@ -34,6 +34,12 @@ export async function api(path, options = {}) {
   });
 
   if (!response.ok) {
+    // Expired / invalid token — clear session so the login screen shows
+    if (response.status === 401) {
+      clearSession();
+      window.location.reload();
+      return;
+    }
     let message = "Request failed.";
     let code = "";
     try {

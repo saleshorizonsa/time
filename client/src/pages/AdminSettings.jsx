@@ -43,6 +43,7 @@ export default function AdminSettings({ helpers }) {
   const [busy, setBusy]         = useState("");
   const [message, setMessage]   = useState("");
   const [error, setError]       = useState("");
+  const [errorCode, setErrorCode] = useState("");
 
   // Access mode: "upload" (browser file) | "odbc" (server path)
   const [accessMode, setAccessMode] = useState("upload");
@@ -72,9 +73,10 @@ export default function AdminSettings({ helpers }) {
   }, []);
 
   function update(key, value) { setSettings((s) => ({ ...s, [key]: value })); }
-  function notify(msg, isError = false) {
+  function notify(msg, isError = false, code = "") {
     setMessage(isError ? "" : msg);
     setError(isError ? msg : "");
+    setErrorCode(isError ? code : "");
   }
 
   // ── Save settings ────────────────────────────────────────────────────────
@@ -84,7 +86,7 @@ export default function AdminSettings({ helpers }) {
     try {
       setSettings(await api("/api/settings", { method: "PUT", body: settings }));
       notify("Settings saved.");
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -102,7 +104,7 @@ export default function AdminSettings({ helpers }) {
       setUploadSchema(tables);
       notify(`Connected — found ${tables.length} table${tables.length !== 1 ? "s" : ""}.`);
       if (tables.length === 1) applyUploadTable(tables[0]);
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -132,7 +134,7 @@ export default function AdminSettings({ helpers }) {
       form.append("file", uploadFile);
       form.append("tableName", uploadTable);
       setUploadPreview(await api("/api/sync/access-upload-preview", { method: "POST", body: form }));
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -208,7 +210,7 @@ export default function AdminSettings({ helpers }) {
       };
       setSettings(await api("/api/settings", { method: "PUT", body: payload }));
       notify("Mapping saved.");
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -227,7 +229,7 @@ export default function AdminSettings({ helpers }) {
       const dsnLabel = `${result.dsns.length} DSN${result.dsns.length !== 1 ? "s" : ""}`;
       const drvLabel = `${result.drivers.length} driver${result.drivers.length !== 1 ? "s" : ""}`;
       notify(`Detected: ${dsnLabel}, ${drvLabel}.`);
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -270,7 +272,7 @@ export default function AdminSettings({ helpers }) {
         if (tables.length === 1 && !settings.accessTable) applyOdbcTable(tables[0]);
         notify(`Connected — found ${tables.length} table${tables.length !== 1 ? "s" : ""}.`);
       }
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -295,7 +297,7 @@ export default function AdminSettings({ helpers }) {
                 accessPwd: settings.accessPwd }
       });
       setOdbcPreview(result);
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -304,7 +306,7 @@ export default function AdminSettings({ helpers }) {
     try {
       setSettings(await api("/api/settings", { method: "PUT", body: settings }));
       notify("Settings saved.");
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -314,7 +316,7 @@ export default function AdminSettings({ helpers }) {
       await api("/api/settings", { method: "PUT", body: settings });
       const result = await api("/api/sync/pull-now", { method: "POST", body: { dateFrom: pullFrom, dateTo: pullTo } });
       notify(`Pull complete — ${result.recordsUpserted ?? 0} records synced (${pullFrom} → ${pullTo}).`);
-    } catch (err) { notify(err.message, true); }
+    } catch (err) { notify(err.message, true, err.code); }
     finally { setBusy(""); }
   }
 
@@ -470,6 +472,19 @@ export default function AdminSettings({ helpers }) {
               Requires the <strong>Microsoft Access ODBC driver</strong> installed on the machine running this server.
               If you're getting "ODBC unavailable", switch to <strong>Upload File</strong> mode instead.
             </div>
+            {errorCode === "ODBC_UNAVAILABLE" && (
+              <div className="rounded border border-red-200 bg-red-50 p-3 text-sm">
+                <p className="font-semibold text-bad mb-1">ODBC not available on this server</p>
+                <p className="text-slate-700 text-xs mb-2">
+                  The server is running on Linux or does not have the Microsoft Access ODBC driver installed.
+                  Server ODBC mode only works on a <strong>local Windows machine</strong> with the Access driver.
+                </p>
+                <button type="button" onClick={() => { setAccessMode("upload"); setError(""); setErrorCode(""); }}
+                  className="rounded bg-brand px-3 py-1.5 text-xs font-semibold text-white">
+                  Switch to Upload File mode
+                </button>
+              </div>
+            )}
 
             {/* Step 1 */}
             <Step n={1} label="Database connection">

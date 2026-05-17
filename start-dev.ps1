@@ -12,9 +12,12 @@ $localClientBuild   = "C:\Users\$env:USERNAME\AppData\Local\time-client-build"
 
 function Ensure-LocalModules {
     param($srcPackageJson, $localDir)
-    $needsInstall = -not (Test-Path "$localDir\node_modules\express")
-    if ($needsInstall) {
-        Write-Host "Installing packages for $srcPackageJson ..."
+    # Re-install whenever package.json content changes (catches new/updated deps)
+    $srcHash  = (Get-FileHash $srcPackageJson -Algorithm MD5).Hash
+    $hashFile = "$localDir\.pkghash"
+    $cached   = if (Test-Path $hashFile) { (Get-Content $hashFile -Raw).Trim() } else { "" }
+    if ($srcHash -ne $cached) {
+        Write-Host "package.json changed — running npm install in $localDir ..."
         New-Item -ItemType Directory -Force -Path $localDir | Out-Null
         Copy-Item $srcPackageJson "$localDir\package.json"
         $lockFile = ($srcPackageJson -replace "package.json", "package-lock.json")
@@ -22,6 +25,7 @@ function Ensure-LocalModules {
         Push-Location $localDir
         npm install --omit=optional 2>&1 | Select-Object -Last 5
         Pop-Location
+        Set-Content $hashFile $srcHash
     }
 }
 
@@ -36,8 +40,8 @@ $serverNodeModules = "$localServerRun\node_modules"
 Remove-Item -Recurse -Force $serverNodeModules -ErrorAction SilentlyContinue
 cmd /c "mklink /J `"$serverNodeModules`" `"$localServerModules\node_modules`"" | Out-Null
 
-Write-Host "Starting API server on http://localhost:5000 ..."
-Start-Process powershell -ArgumentList "-NoExit -Command `"cd '$localServerRun'; node src/index.js`""
+Write-Host "Starting API server on http://localhost:5000 (nodemon — auto-restarts on file changes) ..."
+Start-Process powershell -ArgumentList "-NoExit -Command `"cd '$localServerRun'; node node_modules\nodemon\bin\nodemon.js src/index.js`""
 
 # ── Client dev server ────────────────────────────────────────────────────────
 Ensure-LocalModules "$clientSrc\package.json" $localClientModules
