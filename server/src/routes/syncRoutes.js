@@ -6,6 +6,7 @@ const { all } = require("../db/localDb");
 const { computeShiftMetrics, getTimeOfDayMinutes } = require("../utils/shiftCalc");
 const { pullFromZktecoDevice } = require("../services/zktecoPullService");
 const { discoverMdbSchema, previewMdbTable, readMdbTable } = require("../services/mdbFileService");
+const { discoverCsvSchema, readCsvRows } = require("../services/csvImportService");
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
@@ -154,6 +155,99 @@ router.post("/access-upload-import", requireRole("Admin"), upload.single("file")
 
       const done = Math.min(i + BATCH, total);
       send({ phase: "processing", done, total, upserted, skipped });
+    }
+
+    send({ phase: "done", done: total, total, upserted, skipped, status: "done" });
+    res.end();
+  } catch (error) {
+    send({ error: error.message });
+    res.end();
+  }
+});
+
+// ── CSV import (no ODBC, no mdb-reader — works on any server) ─────────────────
+
+/** Step 1 — upload .csv, get columns + suggested mapping + 10-row preview */
+router.post("/csv-upload-discover", requireRole("Admin"), upload.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded." });
+    if (!/\.csv$/i.test(req.file.originalname)) return res.status(400).json({ message: "File must be a .csv file." });
+    res.json(discoverCsvSchema(req.file.buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** Step 2 — import CSV rows, streaming NDJSON progress */
+router.post("/csv-upload-import", requireRole("Admin"), upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "No file uploaded." });
+
+  let mapping = {};
+  try { mapping = JSON.parse(req.body.mapping || "{}"); } catch { /* ignore */ }
+  const groupByDay = req.body.groupByDay === "true";
+
+  res.setHeader("Content-Type", "application/x-ndjson");
+  res.setHeader("Cache-Control", "no-cache");
+  const send = (obj) => { try { res.write(JSON.stringify(obj) + "\n"); } catch { /* client gone */ } };
+
+  try {
+    const rawRows = readCsvRows(req.file.buffer, mapping, groupByDay);
+    const total   = rawRows.length;
+
+    const shiftRows = await all("SELECT * FROM shifts WHERE is_active = 1");
+    const shiftMap  = new Map();
+    for (const s of shiftRows) {
+      shiftMap.set(String(s.code).toLowerCase(), s);
+      shiftMap.set(String(s.name).toLowerCase(), s);
+    }
+
+    const BATCH = 500;
+    let upserted = 0, skipped = 0;
+
+    const toIso = (v) => {
+      if (!v) return null;
+      const d = v instanceof Date ? v : new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    };
+
+    for (let i = 0; i < rawRows.length; i += BATCH) {
+      const batch = rawRows.slice(i, i + BATCH);
+      const prepared = batch.map((row) => {
+        const empId = String(row.employeeId ?? "").trim();
+        if (!empId) { skipped++; return null; }
+        const checkIn  = toIso(row.checkIn);
+        const checkOut = toIso(row.checkOut);
+        if (!checkIn && !checkOut) { skipped++; return null; }
+
+        const date = (checkIn || checkOut).slice(0, 10);
+        const shiftKey = String(row.shift || "").trim().toLowerCase();
+        const shift = shiftMap.get(shiftKey);
+
+        let lateMinutes = 0, earlyOutMinutes = 0, overtimeMinutes = 0, calcStatus = "Present";
+        if (shift && checkIn) {
+          const m = computeShiftMetrics(shift, getTimeOfDayMinutes(checkIn), checkOut ? getTimeOfDayMinutes(checkOut) : null);
+          lateMinutes = m.lateMinutes; earlyOutMinutes = m.earlyOutMinutes;
+          overtimeMinutes = m.overtimeMinutes; calcStatus = m.status;
+        }
+
+        return {
+          sourceId:        `csv-${empId}-${date}`,
+          employeeId:      empId,
+          employeeName:    String(row.employeeName ?? ""),
+          department:      String(row.department   ?? ""),
+          shift:           String(row.shift         ?? ""),
+          checkIn, checkOut,
+          status:          row.status || calcStatus || "Present",
+          lateMinutes, earlyOutMinutes,
+          overtimeMinutes: Number(row.overtimeMinutes) || overtimeMinutes
+        };
+      }).filter(Boolean);
+
+      if (prepared.length) {
+        await batchUpsertMdbRows(prepared);
+        upserted += prepared.length;
+      }
+      send({ phase: "processing", done: Math.min(i + BATCH, total), total, upserted, skipped });
     }
 
     send({ phase: "done", done: total, total, upserted, skipped, status: "done" });

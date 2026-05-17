@@ -45,8 +45,17 @@ export default function AdminSettings({ helpers }) {
   const [error, setError]       = useState("");
   const [errorCode, setErrorCode] = useState("");
 
-  // Access mode: "upload" (browser file) | "odbc" (server path)
+  // Access mode: "upload" (.mdb file) | "csv" (CSV file) | "odbc" (server path)
   const [accessMode, setAccessMode] = useState("upload");
+
+  // CSV-mode state
+  const [csvFile, setCsvFile]           = useState(null);
+  const [csvSchema, setCsvSchema]       = useState(null);   // { columns, suggestedMapping, totalRows, preview }
+  const [csvMapping, setCsvMapping]     = useState({});
+  const [csvGroupByDay, setCsvGroupByDay] = useState(false);
+  const [csvResult, setCsvResult]       = useState(null);
+  const [csvProgress, setCsvProgress]   = useState(null);
+  const csvXhrRef = useRef(null);
 
   // Upload-mode state
   const [uploadFile, setUploadFile]       = useState(null);
@@ -193,6 +202,70 @@ export default function AdminSettings({ helpers }) {
     notify("Import cancelled.");
   }
 
+  // ── CSV mode ─────────────────────────────────────────────────────────────
+
+  async function handleCsvDiscover() {
+    if (!csvFile) return;
+    setBusy("cdiscover"); notify("");
+    setCsvSchema(null); setCsvMapping({}); setCsvResult(null); setCsvProgress(null);
+    try {
+      const form = new FormData();
+      form.append("file", csvFile);
+      const result = await api("/api/sync/csv-upload-discover", { method: "POST", body: form });
+      setCsvSchema(result);
+      setCsvMapping(result.suggestedMapping || {});
+      notify(`Detected ${result.columns.length} columns, ${result.totalRows.toLocaleString()} rows.`);
+    } catch (err) { notify(err.message, true, err.code); }
+    finally { setBusy(""); }
+  }
+
+  function handleCsvImport() {
+    if (!csvFile || !csvSchema) return;
+    setBusy("cimport"); notify(""); setCsvResult(null); setCsvProgress(null);
+
+    const form = new FormData();
+    form.append("file", csvFile);
+    form.append("mapping", JSON.stringify(csvMapping));
+    form.append("groupByDay", String(csvGroupByDay));
+
+    const xhr = new XMLHttpRequest();
+    csvXhrRef.current = xhr;
+    xhr.open("POST", `${API_BASE}/api/sync/csv-upload-import`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setCsvProgress({ phase: "upload", uploadPct: Math.round((e.loaded / e.total) * 100) });
+    };
+
+    let lastIdx = 0;
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState >= 3 && xhr.responseText) {
+        const newText = xhr.responseText.slice(lastIdx);
+        lastIdx = xhr.responseText.length;
+        for (const line of newText.split("\n").filter(Boolean)) {
+          try {
+            const p = JSON.parse(line);
+            if (p.error) { notify(p.error, true); return; }
+            setCsvProgress((prev) => ({ ...(prev || {}), ...p }));
+            if (p.status === "done") {
+              setCsvResult(p);
+              notify(`Import done — ${p.upserted} records synced from ${p.total} rows${p.skipped ? `, ${p.skipped} skipped` : ""}.`);
+            }
+          } catch { /* partial line */ }
+        }
+      }
+      if (xhr.readyState === 4) { setBusy(""); }
+    };
+    xhr.send(form);
+  }
+
+  function cancelCsvImport() {
+    csvXhrRef.current?.abort();
+    setBusy(""); setCsvProgress(null);
+    notify("Import cancelled.");
+  }
+
   async function handleSaveUploadMapping() {
     if (!uploadTable) return;
     setBusy("usave"); notify("");
@@ -333,7 +406,10 @@ export default function AdminSettings({ helpers }) {
         {/* Mode toggle */}
         <div className="mt-3 flex overflow-hidden rounded border border-line w-fit text-sm font-medium">
           <ModeBtn active={accessMode === "upload"} onClick={() => setAccessMode("upload")}>
-            Upload File <span className="ml-1 rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 font-semibold">Any PC</span>
+            Upload MDB <span className="ml-1 rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 font-semibold">Any PC</span>
+          </ModeBtn>
+          <ModeBtn active={accessMode === "csv"} onClick={() => setAccessMode("csv")}>
+            Import CSV <span className="ml-1 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 font-semibold">Smallest file</span>
           </ModeBtn>
           <ModeBtn active={accessMode === "odbc"} onClick={() => setAccessMode("odbc")}>
             Server ODBC <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 font-semibold">Driver required</span>
@@ -460,6 +536,98 @@ export default function AdminSettings({ helpers }) {
                 )}
 
                 {uploadPreview && <PreviewTable data={uploadPreview} />}
+              </Step>
+            </div>
+          </div>
+        )}
+
+        {/* ── CSV mode ── */}
+        {accessMode === "csv" && (
+          <div className="mt-5 space-y-5">
+            <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              Export a table or query from MS Access as <strong>.csv</strong> (File → Export → Text File).
+              CSV files are tiny compared to .mdb files and work on any server including Vercel.
+            </div>
+
+            {/* Step 1 */}
+            <Step n={1} label="Pick the CSV file">
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="file" accept=".csv" className="block rounded border border-line p-2 text-sm"
+                  onChange={(e) => {
+                    setCsvFile(e.target.files?.[0] || null);
+                    setCsvSchema(null); setCsvMapping({}); setCsvResult(null);
+                  }} />
+                <button type="button" onClick={handleCsvDiscover} disabled={!csvFile || busy === "cdiscover"}
+                  className="rounded bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  {busy === "cdiscover" ? "Reading…" : csvSchema ? "Re-read" : "Read Columns"}
+                </button>
+              </div>
+            </Step>
+
+            {/* Step 2 */}
+            <div className={!csvSchema ? "opacity-30 pointer-events-none" : ""}>
+              <Step n={2} label={`Map columns${csvSchema ? ` (${csvSchema.totalRows.toLocaleString()} rows)` : ""}`}>
+
+                {/* ZKTeco punch format toggle */}
+                <label className="mb-3 flex items-center gap-2 text-sm cursor-pointer w-fit">
+                  <input type="checkbox" checked={csvGroupByDay} onChange={(e) => setCsvGroupByDay(e.target.checked)} className="h-4 w-4" />
+                  <span className="font-semibold">ZKTeco punch format</span>
+                  <span className="text-xs text-slate-500">— one row per swipe; groups by employee + date (min=In, max=Out)</span>
+                </label>
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {MAPPING_KEYS.map(([field, , ]) => {
+                    const label = FIELD_LABELS[`access${field.charAt(0).toUpperCase() + field.slice(1)}Column`] || field;
+                    const hint = csvGroupByDay && field === "checkIn" ? "CHECKTIME column" : label;
+                    return (
+                      <Field key={field} label={hint}>
+                        <select className="input" value={csvMapping[field] || ""}
+                          onChange={(e) => setCsvMapping((m) => ({ ...m, [field]: e.target.value }))}>
+                          <option value="">Not mapped</option>
+                          {(csvSchema?.columns || []).map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </Field>
+                    );
+                  })}
+                </div>
+
+                {csvSchema?.preview && <PreviewTable data={csvSchema.preview} />}
+              </Step>
+            </div>
+
+            {/* Step 3 */}
+            <div className={!csvSchema ? "opacity-30 pointer-events-none" : ""}>
+              <Step n={3} label="Import">
+                <div className="flex flex-wrap gap-2">
+                  {busy === "cimport" ? (
+                    <button type="button" onClick={cancelCsvImport} className="rounded border border-red-300 bg-red-50 px-5 py-2 text-sm font-semibold text-bad">Cancel</button>
+                  ) : (
+                    <button type="button" onClick={handleCsvImport} disabled={!csvSchema}
+                      className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                      Import Now
+                    </button>
+                  )}
+                </div>
+
+                {csvProgress && !csvResult && (
+                  <div className="mt-4 space-y-2">
+                    {csvProgress.phase === "upload" ? (
+                      <ProgressBar label={`Uploading… ${csvProgress.uploadPct ?? 0}%`} value={csvProgress.uploadPct ?? 0} color="bg-blue-500" />
+                    ) : (
+                      <ProgressBar
+                        label={`Processing ${(csvProgress.done ?? 0).toLocaleString()} / ${(csvProgress.total ?? 0).toLocaleString()} rows — ${csvProgress.upserted ?? 0} synced`}
+                        value={csvProgress.total ? Math.round(((csvProgress.done ?? 0) / csvProgress.total) * 100) : 0}
+                        color="bg-brand" />
+                    )}
+                  </div>
+                )}
+                {csvResult && (
+                  <div className="mt-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+                    <strong>Import complete</strong> — {(csvResult.upserted ?? 0).toLocaleString()} records synced
+                    from {(csvResult.total ?? 0).toLocaleString()} rows
+                    {csvResult.skipped > 0 && `, ${csvResult.skipped} skipped`}.
+                  </div>
+                )}
               </Step>
             </div>
           </div>
