@@ -1,6 +1,6 @@
 const env = require("../config/env");
 const { db, all, get, run } = require("../db/localDb");
-const { queryAttendance } = require("./accessService");
+const { queryAttendance, queryZktecoAttendance } = require("./accessService");
 const { getSettings } = require("./settingsService");
 const { computeShiftMetrics, getTimeOfDayMinutes } = require("../utils/shiftCalc");
 
@@ -175,7 +175,8 @@ async function pullAttendanceData(options = {}) {
 
   try {
     const settings = await getSettings();
-    const rows = await queryAttendance({ ...settings, ...options });
+    const isZkteco = String(settings.accessZktecoMode) === "true";
+    const rows = await (isZkteco ? queryZktecoAttendance : queryAttendance)({ ...settings, ...options });
     let upserted = 0;
     for (const row of rows) {
       // Apply shift metrics when the Access row already knows the shift name

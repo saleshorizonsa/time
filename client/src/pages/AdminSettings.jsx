@@ -261,8 +261,15 @@ export default function AdminSettings({ helpers }) {
       });
       const tables = result.tables || [];
       setOdbcSchema(tables);
-      notify(`Connected — found ${tables.length} table${tables.length !== 1 ? "s" : ""}.`);
-      if (tables.length === 1 && !settings.accessTable) applyOdbcTable(tables[0]);
+      if (result.isZktecoSchema) {
+        update("accessZktecoMode", "true");
+        update("accessTable", "CHECKINOUT");
+        notify("ZKTeco att2000 schema detected — CHECKINOUT + USERINFO + DEPARTMENTS will be joined automatically.");
+      } else {
+        update("accessZktecoMode", "");
+        if (tables.length === 1 && !settings.accessTable) applyOdbcTable(tables[0]);
+        notify(`Connected — found ${tables.length} table${tables.length !== 1 ? "s" : ""}.`);
+      }
     } catch (err) { notify(err.message, true); }
     finally { setBusy(""); }
   }
@@ -535,35 +542,69 @@ export default function AdminSettings({ helpers }) {
 
             {/* Step 2 */}
             <div className={odbcSchema.length === 0 ? "opacity-30 pointer-events-none" : ""}>
-              <Step n={2} label={`Select table & map columns ${odbcSchema.length ? `(${odbcSchema.length} tables)` : ""}`}>
-                <Field label="Table">
-                  <select className="input" value={settings.accessTable || ""} onChange={(e) => { const t = odbcSchema.find((x) => x.name === e.target.value); if (t) applyOdbcTable(t); else update("accessTable", e.target.value); }}>
-                    <option value="">Select table…</option>
-                    {odbcSchema.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-                    {!odbcSchema.length && settings.accessTable && <option value={settings.accessTable}>{settings.accessTable}</option>}
-                  </select>
-                </Field>
-                {settings.accessTable && (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    {MAPPING_KEYS.map(([, settingKey]) => (
-                      <Field key={settingKey} label={FIELD_LABELS[settingKey]}>
-                        {odbcColumns.length ? (
-                          <select className="input" value={settings[settingKey] || ""} onChange={(e) => update(settingKey, e.target.value)}>
-                            <option value="">Not mapped</option>
-                            {odbcColumns.map((c) => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        ) : (
-                          <input className="input" value={settings[settingKey] || ""} onChange={(e) => update(settingKey, e.target.value)} />
-                        )}
-                      </Field>
-                    ))}
+              <Step n={2} label={`Table & column mapping ${odbcSchema.length ? `(${odbcSchema.length} tables)` : ""}`}>
+
+                {settings.accessZktecoMode === "true" ? (
+                  /* ── ZKTeco auto-mode ── */
+                  <div className="rounded border border-green-200 bg-green-50 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-green-800">ZKTeco att2000.mdb detected — mapping applied automatically</p>
+                    <div className="grid gap-2 text-xs text-green-900 md:grid-cols-2">
+                      {[
+                        ["Employee ID",   "USERINFO.Badgenumber"],
+                        ["Employee Name", "USERINFO.Name"],
+                        ["Department",    "DEPARTMENTS.DEPTNAME"],
+                        ["Check In",      "Min(CHECKINOUT.CHECKTIME) per day"],
+                        ["Check Out",     "Max(CHECKINOUT.CHECKTIME) per day"],
+                        ["Join key",      "CHECKINOUT.USERID = USERINFO.Badgenumber"],
+                      ].map(([label, val]) => (
+                        <div key={label} className="flex gap-2">
+                          <span className="w-28 shrink-0 font-semibold">{label}</span>
+                          <span className="font-mono">{val}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-green-700">
+                      Each employee's punches are grouped by day — first swipe = Check In, last swipe = Check Out.
+                      Single-swipe days record Check In only.
+                    </p>
+                    <button type="button" onClick={() => { update("accessZktecoMode", ""); update("accessTable", ""); }}
+                      className="text-xs text-slate-500 underline hover:text-bad">
+                      Switch to manual column mapping instead
+                    </button>
                   </div>
+                ) : (
+                  /* ── Manual mapping ── */
+                  <>
+                    <Field label="Table">
+                      <select className="input" value={settings.accessTable || ""} onChange={(e) => { const t = odbcSchema.find((x) => x.name === e.target.value); if (t) applyOdbcTable(t); else update("accessTable", e.target.value); }}>
+                        <option value="">Select table…</option>
+                        {odbcSchema.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                        {!odbcSchema.length && settings.accessTable && <option value={settings.accessTable}>{settings.accessTable}</option>}
+                      </select>
+                    </Field>
+                    {settings.accessTable && (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        {MAPPING_KEYS.map(([, settingKey]) => (
+                          <Field key={settingKey} label={FIELD_LABELS[settingKey]}>
+                            {odbcColumns.length ? (
+                              <select className="input" value={settings[settingKey] || ""} onChange={(e) => update(settingKey, e.target.value)}>
+                                <option value="">Not mapped</option>
+                                {odbcColumns.map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            ) : (
+                              <input className="input" value={settings[settingKey] || ""} onChange={(e) => update(settingKey, e.target.value)} />
+                            )}
+                          </Field>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </Step>
             </div>
 
             {/* Step 3 */}
-            <div className={!settings.accessTable ? "opacity-30 pointer-events-none" : ""}>
+            <div className={!settings.accessTable && settings.accessZktecoMode !== "true" ? "opacity-30 pointer-events-none" : ""}>
               <Step n={3} label="Date range &amp; pull">
 
                 {/* Preset buttons */}
@@ -599,7 +640,7 @@ export default function AdminSettings({ helpers }) {
                   <button type="button" onClick={handleSaveOdbcSettings} disabled={!settings.accessTable || busy === "osave" || busy === "opull"} className="rounded border border-brand px-4 py-2 text-sm font-semibold text-brand disabled:opacity-50">
                     {busy === "osave" ? "Saving…" : "Save Settings"}
                   </button>
-                  <button type="button" onClick={handleOdbcPull} disabled={!settings.accessTable || !pullFrom || busy === "opull" || busy === "osave"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  <button type="button" onClick={handleOdbcPull} disabled={(!settings.accessTable && settings.accessZktecoMode !== "true") || !pullFrom || busy === "opull" || busy === "osave"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
                     {busy === "opull" ? "Pulling…" : "Pull Now"}
                   </button>
                 </div>

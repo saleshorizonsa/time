@@ -11,7 +11,8 @@ router.get("/", async (req, res, next) => {
   try {
     const saved = await getSettings();
     res.json({
-      accessDsn:    saved.accessDsn    || "",
+      accessDsn:         saved.accessDsn         || "",
+      accessZktecoMode:  saved.accessZktecoMode  || "",
       accessDbPath: saved.accessDbPath || env.access.dbPath,
       accessDriver: saved.accessDriver || env.access.driver,
       accessTable: saved.accessTable || env.access.table,
@@ -52,6 +53,7 @@ router.put("/", requireRole("Admin"), async (req, res, next) => {
   try {
     const allowed = [
       "accessDsn",
+      "accessZktecoMode",
       "accessDbPath",
       "accessDriver",
       "accessTable",

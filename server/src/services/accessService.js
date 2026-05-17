@@ -197,7 +197,7 @@ async function discoverAccessSchema(settings = {}) {
       tables.push({ name: tableName, columns: cols, suggestedMapping: autoMapColumns(cols) });
     }
 
-    return { tables };
+    return { tables, isZktecoSchema: isZktecoSchema(tables.map((t) => t.name)) };
   } catch (error) {
     if (/permission|denied|not a valid password/i.test(error.message)) {
       error.code = "PERMISSION_DENIED";
@@ -224,6 +224,72 @@ async function getTablePreview(settings = {}, limit = 10) {
     return { columns, rows: rows.map((r) => columns.map((c) => r[c])) };
   } catch (error) {
     if (/permission|denied/i.test(error.message)) error.code = "PERMISSION_DENIED";
+    throw error;
+  } finally {
+    if (connection) await connection.close().catch(() => {});
+  }
+}
+
+// Detect the ZKTeco att2000.mdb schema by table names
+function isZktecoSchema(tableNames) {
+  const upper = tableNames.map((n) => n.toUpperCase());
+  return upper.includes("USERINFO") && upper.includes("CHECKINOUT");
+}
+
+/**
+ * JOIN query for ZKTeco att2000.mdb:
+ *   CHECKINOUT → USERINFO (USERID = Badgenumber)
+ *              → DEPARTMENTS (DEFAULTDEPTID = DEPTID)
+ * Aggregates each employee's punches into one row per day:
+ *   checkIn  = first punch of the day
+ *   checkOut = last punch (Null when only one punch recorded)
+ */
+async function queryZktecoAttendance(settings = {}) {
+  validateDbPath(settings.accessDbPath || env.access.dbPath, Boolean(settings.accessDsn));
+
+  const conditions = [];
+  if (settings.dateFrom) conditions.push(`ci.CHECKTIME >= #${settings.dateFrom}#`);
+  if (settings.dateTo) {
+    const d = new Date(settings.dateTo);
+    d.setDate(d.getDate() + 1);
+    conditions.push(`ci.CHECKTIME < #${d.toISOString().slice(0, 10)}#`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  // Access SQL requires parentheses around multi-table JOINs.
+  // IIf returns Null for checkOut when Min = Max (single-punch days).
+  const sql = `
+    SELECT
+      u.Badgenumber     AS employeeId,
+      u.Name            AS employeeName,
+      d.DEPTNAME        AS department,
+      Format(ci.CHECKTIME,'yyyy-mm-dd') AS attendanceDate,
+      Min(ci.CHECKTIME) AS checkIn,
+      IIf(Min(ci.CHECKTIME)=Max(ci.CHECKTIME),Null,Max(ci.CHECKTIME)) AS checkOut
+    FROM (CHECKINOUT ci
+      INNER JOIN USERINFO u ON ci.USERID = u.Badgenumber)
+      LEFT JOIN DEPARTMENTS d ON u.DEFAULTDEPTID = d.DEPTID
+    ${where}
+    GROUP BY u.Badgenumber, u.Name, d.DEPTNAME, Format(ci.CHECKTIME,'yyyy-mm-dd')
+  `;
+
+  let connection;
+  try {
+    const odbc = loadOdbc();
+    connection = await odbc.connect(buildConnectionString(settings));
+    const rows = await connection.query(sql);
+    return rows.map((r) => ({
+      employeeId:      String(r.employeeId   ?? ""),
+      employeeName:    String(r.employeeName ?? ""),
+      department:      String(r.department   ?? ""),
+      shift:           "",
+      checkIn:         r.checkIn  ?? null,
+      checkOut:        r.checkOut ?? null,
+      status:          "Present",
+      overtimeMinutes: 0
+    }));
+  } catch (error) {
+    if (/locked|already opened|could not use/i.test(error.message)) error.code = "DB_LOCKED";
     throw error;
   } finally {
     if (connection) await connection.close().catch(() => {});
@@ -268,4 +334,4 @@ async function discoverOdbcSources() {
   return { dsns, drivers };
 }
 
-module.exports = { autoMapColumns, buildConnectionString, discoverAccessSchema, discoverOdbcSources, getTablePreview, queryAttendance, validateDbPath };
+module.exports = { autoMapColumns, buildConnectionString, discoverAccessSchema, discoverOdbcSources, getTablePreview, queryAttendance, queryZktecoAttendance, validateDbPath };
