@@ -133,7 +133,7 @@ Direct pull on port `4370` is also available as a backup, but it requires VPN or
 
 ## Reports
 
-Excel-compatible `.xls` and PDF exports use the same filtered dataset as the Employee Attendance Report page.
+Excel (`.xlsx`) and PDF exports use the same filtered dataset as the Employee Attendance Report page. Both include all filtered rows, column totals, date range, and a generated timestamp. The exported filenames include the selected date range.
 
 ## Mobile Punch Geofence
 
@@ -196,7 +196,50 @@ The **Management** module turns the reporting app into an attendance operations 
 
 - Shift definitions with grace and overtime policy fields
 - Company holiday calendar
-- Leave request submission and Admin approval/rejection
-- Attendance correction submission and Admin approval/rejection
-- Approved corrections write back into `attendance_records`
+- Leave request submission and Admin approval/rejection — approved leaves auto-create attendance rows with status `Leave` for each calendar day in the range
+- Attendance correction submission and Admin approval/rejection — approved corrections recalculate late/early-out/overtime from the shift policy and write back to `attendance_records`
+- Overlap validation: submitting a leave request that overlaps an existing pending/approved leave is rejected with a clear error
 - Operational counters for pending leaves and corrections
+
+## Manual Test Checklist
+
+Run these after `npm install` + `npm start` with valid env vars:
+
+### Auth
+- [ ] Login with correct credentials → JWT returned, dashboard loads
+- [ ] Login with wrong password → 401 with clear message
+- [ ] Empty email/password → 400 validation error
+- [ ] Viewer URL-typing `/settings` or `/master` in hash → redirected to `/dashboard`
+
+### Mobile Punch (Issue 1)
+- [ ] Employee A punches IN → one row in `attendance_records` with `check_in` set, `check_out` NULL, `source_id = mobile-{empId}-{date}`
+- [ ] Same employee punches OUT same day → same row updated, `check_out` now set
+- [ ] Punching IN again overwrites `check_in` on the same row (re-punch allowed)
+- [ ] `mobile_punches` table always gains a new audit row per punch regardless
+
+### Shift Calculations (Issue 2)
+- [ ] Create shift 08:00–17:00, grace 10 min. Access/mobile record with check_in 08:05 → `late_minutes = 0`
+- [ ] Same shift, check_in 08:20 → `late_minutes = 10`
+- [ ] Check_out 16:30 → `early_out_minutes = 30`
+- [ ] Check_out 18:30 with `overtime_after_minutes = 60` → `overtime_minutes = 30`
+
+### Reports (Issue 3)
+- [ ] Export with date range → `.xlsx` file opens in Excel with header, all rows, totals row
+- [ ] Export → `.pdf` file opens, shows report title, date range, all pages, totals footer
+- [ ] Filename contains the selected date range
+
+### Leave Approval (Issue 7)
+- [ ] Approve a leave request spanning 3 days → 3 rows in `attendance_records` with status `Leave`
+- [ ] Reject a leave → no attendance rows created
+- [ ] Overlapping leave submission → 409 error
+
+### Correction Approval (Issue 7)
+- [ ] Submit correction for employee on a given date with check_in/check_out
+- [ ] Approve → row in `attendance_records` has correct `late_minutes`/`overtime_minutes` based on shift
+
+### ZKTeco ADMS (Issue 8)
+- [ ] POST to `/iclock/cdata` with ATTLOG containing 2 lines (IN + OUT) for same employee+day → one row in `attendance_records` with both times
+- [ ] Second POST with OUT punch only → same row updated with `check_out`, `check_in` preserved
+
+### Unit Tests
+- [ ] `npm test` (inside `server/`) passes all shift calculation assertions

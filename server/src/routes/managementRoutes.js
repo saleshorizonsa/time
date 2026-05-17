@@ -1,10 +1,22 @@
 const express = require("express");
 const { all, get, run } = require("../db/localDb");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { upsertAttendance } = require("../services/syncService");
+const { upsertBySourceId, calculateShiftMetrics } = require("../services/syncService");
 
 const router = express.Router();
 router.use(requireAuth);
+
+/** Returns all dates (YYYY-MM-DD) in [startDate, endDate] inclusive. */
+function getDatesInRange(startDate, endDate) {
+  const dates = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return dates;
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
 
 router.get("/overview", async (req, res, next) => {
   try {
@@ -36,6 +48,9 @@ router.get("/shifts", async (req, res, next) => {
 router.post("/shifts", requireRole("Admin"), async (req, res, next) => {
   try {
     const item = req.body;
+    if (!item.code || !item.name || !item.startTime || !item.endTime) {
+      return res.status(400).json({ message: "code, name, startTime, and endTime are required." });
+    }
     const result = await run(
       `INSERT INTO shifts (code, name, start_time, end_time, grace_minutes, early_out_grace_minutes, overtime_after_minutes, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -98,6 +113,9 @@ router.get("/holidays", async (req, res, next) => {
 router.post("/holidays", requireRole("Admin"), async (req, res, next) => {
   try {
     const item = req.body;
+    if (!item.holidayDate || !item.name) {
+      return res.status(400).json({ message: "holidayDate and name are required." });
+    }
     const result = await run(
       "INSERT INTO holidays (company_id, holiday_date, name, type) VALUES (?, ?, ?, ?)",
       [item.companyId || null, item.holidayDate, item.name, item.type || "Public"]
@@ -130,6 +148,24 @@ router.post("/leave-requests", async (req, res, next) => {
     const item = req.body;
     const employeeId = item.employeeId || req.user.employeeId;
     if (!employeeId) return res.status(400).json({ message: "Employee is required." });
+    if (!item.leaveType || !item.startDate || !item.endDate) {
+      return res.status(400).json({ message: "leaveType, startDate, and endDate are required." });
+    }
+    if (item.startDate > item.endDate) {
+      return res.status(400).json({ message: "startDate must be on or before endDate." });
+    }
+
+    // Check for overlapping approved/pending leave for this employee
+    const overlap = await get(
+      `SELECT id FROM leave_requests
+       WHERE employee_id = ? AND status IN ('Pending', 'Approved')
+         AND start_date <= ? AND end_date >= ?`,
+      [employeeId, item.endDate, item.startDate]
+    );
+    if (overlap) {
+      return res.status(409).json({ message: "An overlapping leave request already exists for this period." });
+    }
+
     const result = await run(
       "INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, reason, requested_by) VALUES (?, ?, ?, ?, ?, ?)",
       [employeeId, item.leaveType, item.startDate, item.endDate, item.reason || "", req.user.id]
@@ -143,10 +179,42 @@ router.post("/leave-requests", async (req, res, next) => {
 router.patch("/leave-requests/:id/review", requireRole("Admin"), async (req, res, next) => {
   try {
     const status = req.body.status === "Rejected" ? "Rejected" : "Approved";
+
+    // Get full leave + employee before updating
+    const leave = await get(
+      `SELECT lr.*, e.employee_code, e.full_name, e.department, e.shift
+       FROM leave_requests lr
+       JOIN employees e ON e.id = lr.employee_id
+       WHERE lr.id = ?`,
+      [req.params.id]
+    );
+    if (!leave) return res.status(404).json({ message: "Leave request not found." });
+
     await run(
       "UPDATE leave_requests SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, review_note = ? WHERE id = ?",
       [status, req.user.id, req.body.reviewNote || "", req.params.id]
     );
+
+    if (status === "Approved") {
+      // Create one attendance record per leave day
+      const dates = getDatesInRange(leave.start_date, leave.end_date);
+      for (const date of dates) {
+        await upsertBySourceId({
+          sourceId: `leave-${leave.id}-${date}`,
+          employeeId: leave.employee_code,
+          employeeName: leave.full_name,
+          department: leave.department || "",
+          shift: leave.shift || "",
+          checkIn: `${date}T00:00:00.000Z`,
+          checkOut: `${date}T23:59:59.000Z`,
+          status: "Leave",
+          overtimeMinutes: 0,
+          lateMinutes: 0,
+          earlyOutMinutes: 0
+        });
+      }
+    }
+
     res.json(await get("SELECT * FROM leave_requests WHERE id = ?", [req.params.id]));
   } catch (error) {
     next(error);
@@ -175,6 +243,13 @@ router.post("/corrections", async (req, res, next) => {
     const item = req.body;
     const employeeId = item.employeeId || req.user.employeeId;
     if (!employeeId) return res.status(400).json({ message: "Employee is required." });
+    if (!item.attendanceDate) return res.status(400).json({ message: "attendanceDate is required." });
+
+    // Basic time sanity check
+    if (item.checkIn && item.checkOut && item.checkIn >= item.checkOut) {
+      return res.status(400).json({ message: "checkOut must be after checkIn." });
+    }
+
     const result = await run(
       `INSERT INTO attendance_corrections (employee_id, attendance_date, check_in, check_out, reason, requested_by)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -204,16 +279,24 @@ router.patch("/corrections/:id/review", requireRole("Admin"), async (req, res, n
     );
 
     if (status === "Approved") {
-      await upsertAttendance({
+      // Calculate shift metrics from the corrected times
+      const metrics = await calculateShiftMetrics(
+        correction.shift,
+        correction.check_in || `${correction.attendance_date}T00:00:00`,
+        correction.check_out || null
+      );
+      await upsertBySourceId({
         sourceId: `correction-${correction.id}`,
         employeeId: correction.employee_code,
         employeeName: correction.full_name,
         department: correction.department || "",
         shift: correction.shift || "",
         checkIn: correction.check_in || `${correction.attendance_date}T00:00:00`,
-        checkOut: correction.check_out || "",
-        status: "Present",
-        overtimeMinutes: 0
+        checkOut: correction.check_out || null,
+        status: metrics.status,
+        overtimeMinutes: metrics.overtimeMinutes,
+        lateMinutes: metrics.lateMinutes,
+        earlyOutMinutes: metrics.earlyOutMinutes
       });
     }
 

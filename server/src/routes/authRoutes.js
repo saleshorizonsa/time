@@ -12,11 +12,14 @@ router.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const login = String(email || "").trim();
+    const pwd = String(password || "");
+    if (!login || !pwd) return res.status(400).json({ message: "Email and password are required." });
+    if (login.length > 254 || pwd.length > 256) return res.status(400).json({ message: "Invalid input." });
     const user = await get("SELECT * FROM users WHERE lower(email) = lower(?) OR lower(username) = lower(?)", [
       login,
       login
     ]);
-    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    if (!user || !(await bcrypt.compare(pwd, user.password_hash))) {
       return res.status(401).json({ message: "Invalid login or password." });
     }
 
@@ -64,9 +67,13 @@ router.post("/supabase-login", async (req, res, next) => {
 
 router.get("/me", requireAuth, (req, res) => res.json({ user: req.user }));
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 router.post("/users", requireAuth, requireRole("Admin"), async (req, res, next) => {
   try {
     const { email, password, role } = req.body;
+    if (!email || !EMAIL_RE.test(String(email))) return res.status(400).json({ message: "Valid email is required." });
+    if (!password || String(password).length < 8) return res.status(400).json({ message: "Password must be at least 8 characters." });
     const hash = await bcrypt.hash(password, 10);
     const result = await run("INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)", [
       email,
