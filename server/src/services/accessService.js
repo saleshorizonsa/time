@@ -44,8 +44,13 @@ function loadOdbc() {
   }
 }
 
+// Strip invisible Unicode control/formatting characters that copy-paste can introduce
+function sanitizePath(raw) {
+  return String(raw || "").replace(/[​-‏‪-‮﻿­]/g, "").trim();
+}
+
 function buildConnectionString(settings = {}) {
-  const dbPath = settings.accessDbPath || env.access.dbPath;
+  const dbPath = sanitizePath(settings.accessDbPath || env.access.dbPath);
   const driver = settings.accessDriver || env.access.driver;
   const password = settings.accessDbPassword || env.access.password;
   const uid = settings.accessUid || env.access.uid;
@@ -63,23 +68,35 @@ function buildConnectionString(settings = {}) {
 }
 
 function validateDbPath(dbPath) {
-  if (!dbPath) {
+  const clean = sanitizePath(dbPath);
+
+  if (!clean) {
     const error = new Error("Access database path is empty.");
     error.code = "INVALID_PATH";
     throw error;
   }
 
-  if (!/\.accdb$|\.mdb$/i.test(dbPath)) {
+  if (!/\.accdb$|\.mdb$/i.test(clean)) {
     const error = new Error("Access database path must point to an .accdb or .mdb file.");
     error.code = "INVALID_PATH";
     throw error;
   }
 
-  if (!fs.existsSync(dbPath)) {
-    const error = new Error(`Access database is unavailable: ${dbPath}`);
-    error.code = dbPath.startsWith("\\\\") ? "REMOTE_UNAVAILABLE" : "INVALID_PATH";
+  const isUncOrMapped = clean.startsWith("\\\\") || /^[a-zA-Z]:\\/.test(clean) === false;
+  if (isUncOrMapped) {
+    // Skip fs.existsSync for UNC/network paths — Node's fs check often fails even when
+    // the ODBC driver can reach the share (different credential context). Let ODBC report
+    // its own error if the path is truly unreachable.
+    return clean;
+  }
+
+  if (!fs.existsSync(clean)) {
+    const error = new Error(`Access database file not found: ${clean}`);
+    error.code = "INVALID_PATH";
     throw error;
   }
+
+  return clean;
 }
 
 async function queryAttendance(settings = {}) {
@@ -94,8 +111,7 @@ async function queryAttendance(settings = {}) {
     status: settings.accessStatusColumn || env.access.columns.status,
     overtimeMinutes: settings.accessOvertimeMinutesColumn || env.access.columns.overtimeMinutes
   };
-  const dbPath = settings.accessDbPath || env.access.dbPath;
-  validateDbPath(dbPath);
+  validateDbPath(settings.accessDbPath || env.access.dbPath);
 
   for (const [label, settingKey] of requiredMappings) {
     if (!columns[label]) {
@@ -138,8 +154,7 @@ async function queryAttendance(settings = {}) {
 }
 
 async function discoverAccessSchema(settings = {}) {
-  const dbPath = settings.accessDbPath || env.access.dbPath;
-  validateDbPath(dbPath);
+  validateDbPath(settings.accessDbPath || env.access.dbPath);
 
   let connection;
   try {
@@ -174,8 +189,7 @@ async function discoverAccessSchema(settings = {}) {
 async function getTablePreview(settings = {}, limit = 10) {
   const table = settings.accessTable || env.access.table;
   if (!table) throw Object.assign(new Error("No table selected."), { code: "INVALID_MAPPING" });
-  const dbPath = settings.accessDbPath || env.access.dbPath;
-  validateDbPath(dbPath);
+  validateDbPath(settings.accessDbPath || env.access.dbPath);
 
   let connection;
   try {
