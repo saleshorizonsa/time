@@ -278,16 +278,29 @@ async function queryZktecoAttendance(settings = {}) {
     const odbc = loadOdbc();
     connection = await odbc.connect(buildConnectionString(settings));
     const rows = await connection.query(sql);
-    return rows.map((r) => ({
-      employeeId:      String(r.employeeId   ?? ""),
-      employeeName:    String(r.employeeName ?? ""),
-      department:      String(r.department   ?? ""),
-      shift:           "",
-      checkIn:         r.checkIn  ?? null,
-      checkOut:        r.checkOut ?? null,
-      status:          "Present",
-      overtimeMinutes: 0
-    }));
+    return rows.map((r) => {
+      // Access ODBC drivers return column names in varying case — normalise to lowercase
+      const row = {};
+      for (const [k, v] of Object.entries(r)) row[k.toLowerCase()] = v;
+
+      const employeeId = String(row.employeeid   ?? row.badgenumber  ?? "");
+      const checkIn    = row.checkin  ?? null;
+      // Derive date string for the sourceId from the Format() alias or the checkIn value
+      const dateStr    = row.attendancedate
+        ?? (checkIn instanceof Date ? checkIn.toISOString().slice(0, 10) : "");
+
+      return {
+        sourceId:        `zkteco-${employeeId}-${dateStr}`,
+        employeeId,
+        employeeName:    String(row.employeename ?? row.name    ?? ""),
+        department:      String(row.department   ?? row.deptname ?? ""),
+        shift:           "",
+        checkIn,
+        checkOut:        row.checkout ?? null,
+        status:          "Present",
+        overtimeMinutes: 0
+      };
+    });
   } catch (error) {
     if (/locked|already opened|could not use/i.test(error.message)) error.code = "DB_LOCKED";
     throw error;

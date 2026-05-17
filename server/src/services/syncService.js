@@ -179,15 +179,16 @@ async function pullAttendanceData(options = {}) {
     const rows = await (isZkteco ? queryZktecoAttendance : queryAttendance)({ ...settings, ...options });
     let upserted = 0;
     for (const row of rows) {
-      // Apply shift metrics when the Access row already knows the shift name
+      // Apply shift metrics when the row knows the shift name
       if (row.shift && row.checkIn) {
         const metrics = await calculateShiftMetrics(row.shift, row.checkIn, row.checkOut);
-        row.lateMinutes = metrics.lateMinutes;
+        row.lateMinutes     = metrics.lateMinutes;
         row.earlyOutMinutes = metrics.earlyOutMinutes;
         row.overtimeMinutes = metrics.overtimeMinutes;
-        row.status = metrics.status;
+        row.status          = metrics.status;
       }
-      upserted += await upsertAttendance(row);
+      // ZKTeco rows carry a stable sourceId — use the sourceId-based upsert path
+      upserted += await (isZkteco ? upsertBySourceId : upsertAttendance)(row);
     }
 
     await run(
