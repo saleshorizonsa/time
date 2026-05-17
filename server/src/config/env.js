@@ -9,8 +9,22 @@ function supabaseProjectRef(url) {
   }
 }
 
+function toTransactionMode(url) {
+  // Supabase session-mode pooler uses port 5432 on *.pooler.supabase.com.
+  // Silently rewrite to transaction mode (port 6543) — unlimited client connections
+  // vs session mode's hard limit of 15.
+  try {
+    const u = new URL(url);
+    if (u.hostname.endsWith(".pooler.supabase.com") && u.port === "5432") {
+      u.port = "6543";
+      return u.toString();
+    }
+  } catch { /* not a valid URL — leave unchanged */ }
+  return url;
+}
+
 function buildDatabaseUrl() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  if (process.env.DATABASE_URL) return toTransactionMode(process.env.DATABASE_URL);
 
   const projectRef = process.env.SUPABASE_PROJECT_REF || supabaseProjectRef(process.env.SUPABASE_URL || "");
   const password = process.env.SUPABASE_DB_PASSWORD;
@@ -36,7 +50,7 @@ const env = {
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
   databaseUrl: buildDatabaseUrl(),
   databaseSsl: process.env.DATABASE_SSL ? process.env.DATABASE_SSL === "true" : Boolean(process.env.SUPABASE_DB_PASSWORD),
-  databasePoolMax: Number(process.env.DATABASE_POOL_MAX || 10),
+  databasePoolMax: Number(process.env.DATABASE_POOL_MAX || 5),
   adminEmail: process.env.ADMIN_EMAIL || "admin@example.com",
   adminPassword: process.env.ADMIN_PASSWORD || "ChangeMe123!",
   isProduction: (process.env.NODE_ENV || "development") === "production",

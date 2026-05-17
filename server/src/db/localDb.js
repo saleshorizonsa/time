@@ -9,8 +9,19 @@ if (!env.databaseUrl) {
 const db = new Pool({
   connectionString: env.databaseUrl,
   ssl: env.databaseSsl ? { rejectUnauthorized: false } : false,
-  max: env.databasePoolMax,
-  idleTimeoutMillis: 30000
+  max: env.databasePoolMax,          // default 5 — stay within Supabase's pool_size
+  idleTimeoutMillis: 10000,          // release idle connections quickly
+  connectionTimeoutMillis: 8000      // fail fast rather than queue indefinitely
+});
+
+db.on("error", (err) => {
+  if (err.code === "EMAXCONNSESSION") {
+    console.error(
+      "[db] Connection pool full (EMAXCONNSESSION). " +
+      "Check that DATABASE_URL uses port 6543 (transaction mode), not 5432 (session mode). " +
+      "Lower DATABASE_POOL_MAX if the error persists."
+    );
+  }
 });
 
 function toPostgresSql(sql) {
