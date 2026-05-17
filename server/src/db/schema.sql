@@ -50,6 +50,27 @@ CREATE TABLE IF NOT EXISTS employees (
   UNIQUE(company_id, employee_code)
 );
 
+CREATE TABLE IF NOT EXISTS locations (
+  id SERIAL PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id),
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  address TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(company_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS departments (
+  id SERIAL PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id),
+  location_id INTEGER REFERENCES locations(id),
+  name TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(company_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS attendance_records (
   id SERIAL PRIMARY KEY,
   source_id TEXT,
