@@ -1,7 +1,7 @@
 const express = require("express");
 const env = require("../config/env");
 const { requireAuth, requireRole } = require("../middleware/auth");
-const { discoverAccessSchema } = require("../services/accessService");
+const { discoverAccessSchema, getTablePreview } = require("../services/accessService");
 const { getSettings, saveSettings } = require("../services/settingsService");
 
 const router = express.Router();
@@ -96,6 +96,16 @@ router.post("/access/discover", requireRole("Admin"), async (req, res, next) => 
     const saved = await getSettings();
     const settings = { ...saved, ...req.body };
     res.json(await discoverAccessSchema(settings));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/access/preview", requireRole("Admin"), async (req, res, next) => {
+  try {
+    const saved = await getSettings();
+    const settings = { ...saved, ...req.body };
+    res.json(await getTablePreview(settings, 10));
   } catch (error) {
     next(error);
   }

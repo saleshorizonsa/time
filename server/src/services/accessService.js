@@ -1,6 +1,27 @@
 const fs = require("fs");
 const env = require("../config/env");
 
+const COLUMN_PATTERNS = {
+  employeeId:      [/^employee.?id$/i, /^emp.?id$/i, /^emp.?no$/i, /^staff.?id$/i, /^badge/i],
+  employeeName:    [/^employee.?name$/i, /^emp.?name$/i, /^full.?name$/i, /^staff.?name$/i, /^name$/i],
+  department:      [/^dep(art)?t?ment$/i, /^dept$/i, /^section$/i],
+  shift:           [/^shift/i, /^schedule/i],
+  checkIn:         [/^check.?in$/i, /^time.?in$/i, /^in.?time$/i, /^clock.?in$/i, /^arrival/i],
+  checkOut:        [/^check.?out$/i, /^time.?out$/i, /^out.?time$/i, /^clock.?out$/i, /^departure/i],
+  status:          [/^status$/i, /^att.?status$/i, /^att$/i],
+  overtimeMinutes: [/^overtime/i, /^ot.?min/i, /^over.?time/i]
+};
+
+function autoMapColumns(columns) {
+  const mapping = {};
+  for (const [field, patterns] of Object.entries(COLUMN_PATTERNS)) {
+    for (const col of columns) {
+      if (patterns.some((p) => p.test(col))) { mapping[field] = col; break; }
+    }
+  }
+  return mapping;
+}
+
 const requiredMappings = [
   ["employeeId", "accessEmployeeIdColumn"],
   ["employeeName", "accessEmployeeNameColumn"],
@@ -131,12 +152,10 @@ async function discoverAccessSchema(settings = {}) {
       const tableName = tableRow.TABLE_NAME || tableRow.table_name;
       if (!tableName || String(tableName).startsWith("MSys")) continue;
       const columnRows = await connection.columns(null, null, tableName, null);
-      tables.push({
-        name: tableName,
-        columns: columnRows
-          .map((column) => column.COLUMN_NAME || column.column_name)
-          .filter(Boolean)
-      });
+      const cols = columnRows
+        .map((column) => column.COLUMN_NAME || column.column_name)
+        .filter(Boolean);
+      tables.push({ name: tableName, columns: cols, suggestedMapping: autoMapColumns(cols) });
     }
 
     return { tables };
@@ -152,4 +171,25 @@ async function discoverAccessSchema(settings = {}) {
   }
 }
 
-module.exports = { buildConnectionString, discoverAccessSchema, queryAttendance, validateDbPath };
+async function getTablePreview(settings = {}, limit = 10) {
+  const table = settings.accessTable || env.access.table;
+  if (!table) throw Object.assign(new Error("No table selected."), { code: "INVALID_MAPPING" });
+  const dbPath = settings.accessDbPath || env.access.dbPath;
+  validateDbPath(dbPath);
+
+  let connection;
+  try {
+    const odbc = loadOdbc();
+    connection = await odbc.connect(buildConnectionString(settings));
+    const rows = await connection.query(`SELECT TOP ${Number(limit)} * FROM [${table}]`);
+    const columns = rows.length ? Object.keys(rows[0]).filter((k) => !k.startsWith("_")) : [];
+    return { columns, rows: rows.map((r) => columns.map((c) => r[c])) };
+  } catch (error) {
+    if (/permission|denied/i.test(error.message)) error.code = "PERMISSION_DENIED";
+    throw error;
+  } finally {
+    if (connection) await connection.close().catch(() => {});
+  }
+}
+
+module.exports = { autoMapColumns, buildConnectionString, discoverAccessSchema, getTablePreview, queryAttendance, validateDbPath };
