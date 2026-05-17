@@ -173,6 +173,27 @@ export default function AdminSettings({ helpers }) {
     notify("Import cancelled.");
   }
 
+  async function handleSaveUploadMapping() {
+    if (!uploadTable) return;
+    setBusy("usave"); notify("");
+    try {
+      const payload = {
+        accessTable:                 uploadTable,
+        accessEmployeeIdColumn:      uploadMapping.employeeId      || "",
+        accessEmployeeNameColumn:    uploadMapping.employeeName    || "",
+        accessDepartmentColumn:      uploadMapping.department      || "",
+        accessShiftColumn:           uploadMapping.shift           || "",
+        accessCheckInColumn:         uploadMapping.checkIn         || "",
+        accessCheckOutColumn:        uploadMapping.checkOut        || "",
+        accessStatusColumn:          uploadMapping.status          || "",
+        accessOvertimeMinutesColumn: uploadMapping.overtimeMinutes || "",
+      };
+      setSettings(await api("/api/settings", { method: "PUT", body: payload }));
+      notify("Mapping saved.");
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
   const uploadColumns = uploadSchema.find((t) => t.name === uploadTable)?.columns || [];
 
   // ── ODBC mode ────────────────────────────────────────────────────────────
@@ -215,6 +236,15 @@ export default function AdminSettings({ helpers }) {
                 accessUid: settings.accessUid, accessPwd: settings.accessPwd }
       });
       setOdbcPreview(result);
+    } catch (err) { notify(err.message, true); }
+    finally { setBusy(""); }
+  }
+
+  async function handleSaveOdbcSettings() {
+    setBusy("osave"); notify("");
+    try {
+      setSettings(await api("/api/settings", { method: "PUT", body: settings }));
+      notify("Settings saved.");
     } catch (err) { notify(err.message, true); }
     finally { setBusy(""); }
   }
@@ -328,6 +358,9 @@ export default function AdminSettings({ helpers }) {
                   <button type="button" onClick={handleUploadPreview} disabled={!uploadTable || busy === "upreview" || busy === "uimport"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
                     {busy === "upreview" ? "Loading…" : "Preview 10 Rows"}
                   </button>
+                  <button type="button" onClick={handleSaveUploadMapping} disabled={!uploadTable || busy === "usave" || busy === "uimport"} className="rounded border border-brand px-4 py-2 text-sm font-semibold text-brand disabled:opacity-50">
+                    {busy === "usave" ? "Saving…" : "Save Mapping"}
+                  </button>
                   {busy === "uimport" ? (
                     <button type="button" onClick={cancelImport} className="rounded border border-red-300 bg-red-50 px-5 py-2 text-sm font-semibold text-bad">
                       Cancel
@@ -436,8 +469,11 @@ export default function AdminSettings({ helpers }) {
                   <button type="button" onClick={handleOdbcPreview} disabled={!settings.accessTable || busy === "opreview"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
                     {busy === "opreview" ? "Loading…" : "Preview 10 Rows"}
                   </button>
-                  <button type="button" onClick={handleOdbcPull} disabled={!settings.accessTable || busy === "opull"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                    {busy === "opull" ? "Pulling…" : "Save & Pull Now"}
+                  <button type="button" onClick={handleSaveOdbcSettings} disabled={!settings.accessTable || busy === "osave" || busy === "opull"} className="rounded border border-brand px-4 py-2 text-sm font-semibold text-brand disabled:opacity-50">
+                    {busy === "osave" ? "Saving…" : "Save Settings"}
+                  </button>
+                  <button type="button" onClick={handleOdbcPull} disabled={!settings.accessTable || busy === "opull" || busy === "osave"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                    {busy === "opull" ? "Pulling…" : "Pull Now"}
                   </button>
                 </div>
                 {odbcPreview && <PreviewTable data={odbcPreview} />}
