@@ -133,6 +133,17 @@ async function queryAttendance(settings = {}) {
     }
   }
 
+  // Build optional date-range WHERE clause (Access uses #date# literals)
+  const conditions = [];
+  if (settings.dateFrom) conditions.push(`[${columns.checkIn}] >= #${settings.dateFrom}#`);
+  if (settings.dateTo) {
+    // Add one day so the upper bound is inclusive of the selected date
+    const d = new Date(settings.dateTo);
+    d.setDate(d.getDate() + 1);
+    conditions.push(`[${columns.checkIn}] < #${d.toISOString().slice(0, 10)}#`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
   const sql = `
     SELECT
       [${columns.employeeId}] AS employeeId,
@@ -144,6 +155,7 @@ async function queryAttendance(settings = {}) {
       [${columns.status}] AS status,
       [${columns.overtimeMinutes}] AS overtimeMinutes
     FROM [${table}]
+    ${where}
   `;
 
   let connection;

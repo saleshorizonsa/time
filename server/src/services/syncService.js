@@ -163,7 +163,7 @@ async function upsertBySourceId(row) {
   return 1;
 }
 
-async function pullAttendanceData() {
+async function pullAttendanceData(options = {}) {
   if (isSyncing) {
     const error = new Error("A synchronization is already running.");
     error.code = "SYNC_IN_PROGRESS";
@@ -175,7 +175,7 @@ async function pullAttendanceData() {
 
   try {
     const settings = await getSettings();
-    const rows = await queryAttendance(settings);
+    const rows = await queryAttendance({ ...settings, ...options });
     let upserted = 0;
     for (const row of rows) {
       // Apply shift metrics when the Access row already knows the shift name

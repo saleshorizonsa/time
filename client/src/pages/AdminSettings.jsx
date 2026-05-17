@@ -25,6 +25,18 @@ const MAPPING_KEYS = [
   ["overtimeMinutes", "accessOvertimeMinutesColumn"]
 ];
 
+function today() { return new Date().toISOString().slice(0, 10); }
+function isoMonthsAgo(n) { const d = new Date(); d.setMonth(d.getMonth() - n); return d.toISOString().slice(0, 10); }
+function isoYearStart() { const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10); }
+
+const PULL_PRESETS = [
+  { key: "1m",  label: "Last month",   from: () => isoMonthsAgo(1) },
+  { key: "3m",  label: "Last 3 months",from: () => isoMonthsAgo(3) },
+  { key: "6m",  label: "Last 6 months",from: () => isoMonthsAgo(6) },
+  { key: "ytd", label: "This year",    from: () => isoYearStart()  },
+  { key: "custom", label: "Custom",    from: null                   },
+];
+
 export default function AdminSettings({ helpers }) {
   const { api } = helpers;
   const [settings, setSettings] = useState({});
@@ -46,9 +58,14 @@ export default function AdminSettings({ helpers }) {
   const xhrRef = useRef(null);
 
   // ODBC-mode state
-  const [odbcSchema, setOdbcSchema]         = useState([]);
-  const [odbcPreview, setOdbcPreview]       = useState(null);
+  const [odbcSchema, setOdbcSchema]           = useState([]);
+  const [odbcPreview, setOdbcPreview]         = useState(null);
   const [detectedSources, setDetectedSources] = useState(null); // { dsns, drivers }
+
+  // Pull date range
+  const [pullPreset, setPullPreset] = useState("3m");
+  const [pullFrom, setPullFrom]     = useState(() => isoMonthsAgo(3));
+  const [pullTo, setPullTo]         = useState(() => today());
 
   useEffect(() => {
     api("/api/settings").then(setSettings).catch((err) => setError(err.message));
@@ -225,6 +242,12 @@ export default function AdminSettings({ helpers }) {
     setOdbcSchema([]); setOdbcPreview(null);
   }
 
+  function applyPullPreset(key) {
+    setPullPreset(key);
+    const preset = PULL_PRESETS.find((p) => p.key === key);
+    if (preset?.from) { setPullFrom(preset.from()); setPullTo(today()); }
+  }
+
   async function handleOdbcConnect() {
     setOdbcPreview(null); setBusy("oconnect"); notify("");
     try {
@@ -282,8 +305,8 @@ export default function AdminSettings({ helpers }) {
     setBusy("opull"); notify("");
     try {
       await api("/api/settings", { method: "PUT", body: settings });
-      const result = await api("/api/sync/pull-now", { method: "POST" });
-      notify(`Pull complete — ${result.recordsUpserted ?? 0} records synced.`);
+      const result = await api("/api/sync/pull-now", { method: "POST", body: { dateFrom: pullFrom, dateTo: pullTo } });
+      notify(`Pull complete — ${result.recordsUpserted ?? 0} records synced (${pullFrom} → ${pullTo}).`);
     } catch (err) { notify(err.message, true); }
     finally { setBusy(""); }
   }
@@ -541,7 +564,34 @@ export default function AdminSettings({ helpers }) {
 
             {/* Step 3 */}
             <div className={!settings.accessTable ? "opacity-30 pointer-events-none" : ""}>
-              <Step n={3} label="Preview &amp; pull">
+              <Step n={3} label="Date range &amp; pull">
+
+                {/* Preset buttons */}
+                <div className="mb-3">
+                  <p className="mb-1.5 text-xs font-semibold text-slate-600">Date range to pull</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PULL_PRESETS.map((p) => (
+                      <button key={p.key} type="button" onClick={() => applyPullPreset(p.key)}
+                        className={`rounded border px-3 py-1 text-xs font-semibold transition-colors ${pullPreset === p.key ? "border-brand bg-brand text-white" : "border-line bg-white hover:border-brand hover:text-brand"}`}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Date inputs — always visible so user can fine-tune even on presets */}
+                <div className="mb-4 flex flex-wrap items-end gap-3">
+                  <Field label="From">
+                    <input type="date" className="input" value={pullFrom} onChange={(e) => { setPullFrom(e.target.value); setPullPreset("custom"); }} />
+                  </Field>
+                  <Field label="To">
+                    <input type="date" className="input" value={pullTo} onChange={(e) => { setPullTo(e.target.value); setPullPreset("custom"); }} />
+                  </Field>
+                  <p className="pb-1 text-xs text-slate-500 self-end">
+                    Records where Check-In ≥ <strong>{pullFrom}</strong> and &lt; <strong>{pullTo ? new Date(new Date(pullTo).setDate(new Date(pullTo).getDate() + 1)).toISOString().slice(0, 10) : "—"}</strong>
+                  </p>
+                </div>
+
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={handleOdbcPreview} disabled={!settings.accessTable || busy === "opreview"} className="rounded border border-line px-4 py-2 text-sm font-semibold disabled:opacity-50">
                     {busy === "opreview" ? "Loading…" : "Preview 10 Rows"}
@@ -549,7 +599,7 @@ export default function AdminSettings({ helpers }) {
                   <button type="button" onClick={handleSaveOdbcSettings} disabled={!settings.accessTable || busy === "osave" || busy === "opull"} className="rounded border border-brand px-4 py-2 text-sm font-semibold text-brand disabled:opacity-50">
                     {busy === "osave" ? "Saving…" : "Save Settings"}
                   </button>
-                  <button type="button" onClick={handleOdbcPull} disabled={!settings.accessTable || busy === "opull" || busy === "osave"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  <button type="button" onClick={handleOdbcPull} disabled={!settings.accessTable || !pullFrom || busy === "opull" || busy === "osave"} className="rounded bg-brand px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
                     {busy === "opull" ? "Pulling…" : "Pull Now"}
                   </button>
                 </div>

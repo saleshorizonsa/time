@@ -24,7 +24,8 @@ router.get("/status", async (req, res, next) => {
 
 router.post("/pull-now", requireRole("Admin"), async (req, res, next) => {
   try {
-    res.json(await pullAttendanceData());
+    const { dateFrom, dateTo } = req.body || {};
+    res.json(await pullAttendanceData({ dateFrom, dateTo }));
   } catch (error) {
     next(error);
   }
